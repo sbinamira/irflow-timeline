@@ -4,51 +4,7 @@ Technical overview of IRFlow Timeline's architecture for developers and contribu
 
 ## System Architecture
 
-```mermaid
-graph TB
-    subgraph Renderer["React UI Layer — src/App.jsx + detection-rules.js"]
-        direction LR
-        Grid["Virtual Scrolling Grid"]
-        Search["Search & Filtering"]
-        Analytics["Analytics Visualizations"]
-        Rules["Detection Rules\n342 MITRE ATT&CK chains"]
-        State["State: 40+ useState hooks"]
-    end
-
-    subgraph Main["Electron Main Process — main.js"]
-        direction LR
-        IPC_H["48 IPC Handlers"]
-        Dialogs["File Dialogs & Native Menus"]
-        Session["Session Management"]
-        Export["Export Orchestration"]
-    end
-
-    subgraph DB["SQLite Data Engine — db.js"]
-        direction LR
-        TDB["TimelineDB Class\n40+ methods"]
-        FTS["FTS5 Full-Text Search"]
-        Funcs["Custom Functions\nREGEXP · FUZZY_MATCH\nEXTRACT_DATE"]
-        Analyze["Analytics\nHistogram · Process Tree\nLateral Movement\nPersistence Analyzer"]
-    end
-
-    subgraph Parser["Parser Layer — parser.js"]
-        direction LR
-        CSV["CSV/TSV\n128MB chunks"]
-        XLSX["XLSX\nExcelJS streaming"]
-        XLS["XLS\nSheetJS legacy"]
-        EVTX["EVTX\n@ts-evtx binary"]
-        Plaso["Plaso\nSQLite direct query"]
-    end
-
-    Renderer -->|"IPC · contextBridge"| Main
-    Main -->|"Sync / Async API"| DB
-    DB -->|"Streaming I/O"| Parser
-
-    style Renderer fill:#1a1e2e,stroke:#E85D2A,stroke-width:2px,color:#e6edf3
-    style Main fill:#1a1e2e,stroke:#58a6ff,stroke-width:2px,color:#e6edf3
-    style DB fill:#1a1e2e,stroke:#3fb950,stroke-width:2px,color:#e6edf3
-    style Parser fill:#1a1e2e,stroke:#d29922,stroke-width:2px,color:#e6edf3
-```
+![IRFlow Timeline four-layer architecture: React UI Layer, Electron Main Process, SQLite Data Engine, and Parser Layer connected via IPC and streaming I/O](/dfir-tips/Architecture-Diagram.svg)
 
 ## Layer Responsibilities
 
