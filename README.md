@@ -1,5 +1,5 @@
 # IRFlow Timeline
-<video src="docs/public/IRFlow-Timeline-Demo.mp4" autoplay loop muted playsinline width="100%"></video>
+<video src="https://raw.githubusercontent.com/r3nzsec/irflow-timeline/main/docs/public/IRFlow-Timeline-Demo.mp4" autoplay loop muted playsinline width="100%"></video>
 
 A high-performance native macOS application for DFIR timeline analysis. Built on Electron + SQLite to handle large files for forensic timelines (CSV, TSV, XLSX, EVTX, Plaso) without breaking a sweat.
 
