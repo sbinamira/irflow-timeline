@@ -5,7 +5,8 @@ export default defineConfig({
   description: 'High-performance DFIR timeline analysis tool for macOS',
   base: '/irflow-timeline/',
   head: [
-    ['link', { rel: 'icon', href: '/irflow-timeline/favicon.ico' }]
+    ['link', { rel: 'icon', href: '/irflow-timeline/favicon.ico' }],
+    ['script', { 'data-goatcounter': 'https://irflowtimeline.goatcounter.com/count', async: '', src: '//gc.zgo.at/count.js' }]
   ],
   themeConfig: {
     logo: '/logo.png',
