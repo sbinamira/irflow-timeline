@@ -152,6 +152,6 @@ No. All processing happens locally on your machine. No timeline data, file conte
 
 ## Still need help?
 
-- Check the [debug log](/getting-started/architecture) at `~/tle-debug.log` for detailed error information
+- Check the debug log at `~/tle-debug.log` for detailed error information
 - [Open an issue](https://github.com/r3nzsec/irflow-timeline/issues) on GitHub with your macOS version, app version, and the relevant log output
 - Review [Performance Tips](/reference/performance-tips) for optimization guidance

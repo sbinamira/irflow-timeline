@@ -97,7 +97,7 @@
               'tree-danger': proc.name === 'mimikatz.exe',
             }">{{ proc.name }}</span>
             <span class="tree-pid">:{{ proc.pid }}</span>
-            <span v-if="proc.suspicious && proc.name === 'mimikatz.exe'" class="tree-lolbin">LOLBIN</span>
+            <span v-if="proc.suspicious && proc.name === 'mimikatz.exe'" class="tree-lolbin">CREDENTIAL DUMP</span>
           </div>
         </div>
 
@@ -107,34 +107,44 @@
             <span class="panel-title">LATERAL MOVEMENT</span>
             <span class="panel-badge badge-red">3 HOPS</span>
           </div>
-          <svg viewBox="0 0 380 100" class="network-svg">
+          <svg viewBox="0 0 380 140" class="network-svg">
+            <!-- Edges -->
             <g v-for="(edge, i) in lateralEdges" :key="'e' + i">
               <line :x1="lateralNodes[edge.from].x" :y1="lateralNodes[edge.from].y"
                 :x2="lateralNodes[edge.to].x" :y2="lateralNodes[edge.to].y"
-                :stroke="edgeColor(edge.type)" :stroke-width="edge.type === 'failed' ? 1 : 1.5"
-                :stroke-dasharray="edge.type === 'failed' ? '4 3' : 'none'" opacity="0.6" />
-              <text :x="(lateralNodes[edge.from].x + lateralNodes[edge.to].x) / 2"
-                :y="(lateralNodes[edge.from].y + lateralNodes[edge.to].y) / 2 - 5"
-                :fill="edgeColor(edge.type)" font-size="7" text-anchor="middle" font-family="monospace" opacity="0.8">
-                {{ edge.label }}
+                :stroke="edge.green ? '#28C840' : '#555'" :stroke-width="edge.w || 1"
+                :stroke-opacity="edge.green ? 0.5 : 0.3" />
+              <text v-if="edge.count"
+                :x="(lateralNodes[edge.from].x + lateralNodes[edge.to].x) / 2"
+                :y="(lateralNodes[edge.from].y + lateralNodes[edge.to].y) / 2 - 4"
+                :fill="edge.green ? '#28C840' : '#888'" font-size="6" text-anchor="middle" font-family="monospace" opacity="0.7">
+                {{ edge.count }}
               </text>
             </g>
-            <g v-for="(node, i) in lateralNodes" :key="'n' + i">
-              <rect v-if="node.type === 'dc'" :x="node.x - 14" :y="node.y - 10" width="28" height="20" rx="3"
-                :fill="node.compromised ? '#E8613A30' : '#55555520'"
-                :stroke="node.compromised ? '#E8613A' : '#555'" stroke-width="1.2" />
-              <circle v-else-if="node.type === 'external'" :cx="node.x" :cy="node.y" r="10"
-                fill="#FF3B3B15" stroke="#FF3B3B" stroke-width="1" stroke-dasharray="3 2" />
-              <rect v-else :x="node.x - 12" :y="node.y - 8" width="24" height="16" rx="6"
-                :fill="node.compromised ? '#E8613A25' : '#55555515'"
-                :stroke="node.compromised ? '#F0845A' : '#555'" stroke-width="1" />
-              <text :x="node.x" :y="node.y + 3"
-                :fill="node.type === 'external' ? '#FF3B3B' : node.compromised ? '#F5F5F5' : '#888'"
-                font-size="7" text-anchor="middle" font-family="monospace"
-                :font-weight="node.compromised ? 600 : 400">
-                {{ node.id }}
-              </text>
-            </g>
+            <!-- Nodes -->
+            <template v-for="(node, i) in lateralNodes" :key="'n' + i">
+              <!-- Suspicious host: dashed red circle + glow + warning triangle -->
+              <g v-if="node.type === 'suspicious'">
+                <circle :cx="node.x" :cy="node.y" r="15" fill="#FF3B3B" opacity="0.06" />
+                <circle :cx="node.x" :cy="node.y" r="15" fill="none" stroke="#FF3B3B" stroke-width="1" stroke-dasharray="4 2" opacity="0.5" />
+                <rect :x="node.x - 5" :y="node.y - 5" width="10" height="10" rx="1.5" fill="#FF3B3B25" stroke="#FF3B3B" stroke-width="0.8" />
+                <polygon :points="`${node.x+13},${node.y-16} ${node.x+10},${node.y-10} ${node.x+16},${node.y-10}`" fill="#E8613A" />
+                <text :x="node.x+13" :y="node.y-12" fill="#0D0D0D" font-size="5" text-anchor="middle" font-weight="800">!</text>
+                <text :x="node.x" :y="node.y + 25" fill="#CCC" font-size="5" text-anchor="middle" font-family="monospace">{{ node.label }}</text>
+              </g>
+              <!-- Named host: colored rect + label -->
+              <g v-else-if="node.type === 'host'">
+                <rect :x="node.x - 10" :y="node.y - 7" width="20" height="14" rx="2"
+                  :fill="(node.color || '#28C840') + '25'" :stroke="node.color || '#28C840'" stroke-width="1" />
+                <text :x="node.x" :y="node.y + 18" fill="#AAA" font-size="5.5" text-anchor="middle" font-family="monospace">{{ node.label }}</text>
+              </g>
+              <!-- IP address node: small green rect -->
+              <g v-else>
+                <rect :x="node.x - 7" :y="node.y - 5" width="14" height="10" rx="2"
+                  fill="#28C84018" stroke="#28C840" stroke-width="0.7" />
+                <text :x="node.x" :y="node.y + 13" fill="#28C840" font-size="5" text-anchor="middle" font-family="monospace" opacity="0.7">{{ node.label }}</text>
+              </g>
+            </template>
           </svg>
         </div>
       </div>
@@ -201,20 +211,49 @@ const processTree = [
 ]
 
 const lateralNodes = [
-  { id: 'WS01', x: 60, y: 55, type: 'workstation', compromised: true },
-  { id: 'DC01', x: 200, y: 35, type: 'dc', compromised: true },
-  { id: 'SRV-FS', x: 320, y: 25, type: 'server', compromised: true },
-  { id: 'SRV-DB', x: 320, y: 75, type: 'server', compromised: false },
-  { id: 'WS07', x: 200, y: 80, type: 'workstation', compromised: true },
-  { id: '185.220.*', x: 60, y: 15, type: 'external', compromised: false },
+  // Source hosts (left)
+  { x: 45, y: 28, type: 'host', label: 'U42-TECH.S…', color: '#4A90D9' },
+  { x: 42, y: 115, type: 'host', label: 'U42-TECH', color: '#9B59B6' },
+  // Center hosts
+  { x: 135, y: 62, type: 'host', label: 'TEST-VM-CTI', color: '#28C840' },
+  { x: 208, y: 48, type: 'host', label: 'U42-HR', color: '#28C840' },
+  // IP nodes
+  { x: 108, y: 16, type: 'ip', label: '10.2.10.13' },
+  { x: 85, y: 40, type: 'ip', label: '.182:445' },
+  { x: 160, y: 30, type: 'ip', label: '.19:49690' },
+  { x: 82, y: 88, type: 'ip', label: '.10.234' },
+  { x: 155, y: 88, type: 'ip', label: '.13:445' },
+  { x: 188, y: 100, type: 'ip', label: '.19:49701' },
+  { x: 248, y: 78, type: 'ip', label: '127.0.0.1' },
+  { x: 258, y: 32, type: 'ip', label: '10.2.10.159' },
+  // Suspicious outlier hosts (right)
+  { x: 328, y: 22, type: 'suspicious', label: 'DESKTOP-M458NRQ' },
+  { x: 328, y: 68, type: 'suspicious', label: 'DESKTOP-F7153U5' },
+  { x: 328, y: 115, type: 'suspicious', label: 'WIN-DN3C3GPH…' },
 ]
 
 const lateralEdges = [
-  { from: 0, to: 5, label: 'C2', type: 'c2' },
-  { from: 0, to: 1, label: 'RDP', type: 'rdp' },
-  { from: 1, to: 2, label: 'SMB', type: 'smb' },
-  { from: 1, to: 4, label: 'PsExec', type: 'psexec' },
-  { from: 4, to: 3, label: '4625', type: 'failed' },
+  // From U42-TECH.S…
+  { from: 0, to: 4, green: true, count: '1' },
+  { from: 0, to: 5, green: true, count: '5' },
+  { from: 0, to: 2, green: true, count: '102', w: 2 },
+  { from: 0, to: 6, green: true, count: '2' },
+  { from: 0, to: 11, green: false },
+  // Center connections
+  { from: 2, to: 8, green: true, count: '12' },
+  { from: 2, to: 7, green: false, count: '1' },
+  { from: 3, to: 10, green: false },
+  { from: 3, to: 6, green: true, count: '10' },
+  { from: 5, to: 6, green: true, count: '1' },
+  // To suspicious outliers
+  { from: 11, to: 12, green: false, w: 1.5 },
+  { from: 10, to: 13, green: false, count: '24', w: 2 },
+  { from: 13, to: 14, green: true, count: '21' },
+  { from: 10, to: 14, green: false, count: '3' },
+  // From U42-TECH
+  { from: 1, to: 7, green: true, count: '392', w: 2 },
+  { from: 1, to: 9, green: true, count: '1' },
+  { from: 9, to: 8, green: false },
 ]
 
 const filterTags = [
@@ -222,13 +261,6 @@ const filterTags = [
   { label: 'Tag: Lateral Movement', color: '#4A90D9' },
   { label: 'Bookmarked', color: '#FFB020' },
 ]
-
-function edgeColor(type) {
-  if (type === 'c2') return '#FF3B3B'
-  if (type === 'rdp') return '#4A90D9'
-  if (type === 'failed') return '#FF3B3B44'
-  return '#E8613A'
-}
 
 const prefersReducedMotion = typeof window !== 'undefined'
   && window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -495,7 +527,7 @@ onUnmounted(() => {
 }
 
 /* Network graph */
-.network-svg { width: 100%; height: 120px; }
+.network-svg { width: 100%; }
 
 /* Filter tags */
 .filter-tags {

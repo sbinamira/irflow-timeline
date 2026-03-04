@@ -43,6 +43,10 @@ When loading a session:
 Sessions store the original file paths. If you move the source files after saving a session, the load will fail for those tabs. Keep your evidence files in a stable location.
 :::
 
+::: warning Large File Re-Import
+Loading a session re-imports each file from scratch. For large datasets (10GB+), session restoration may take several minutes as all files are streamed back into SQLite. Plan accordingly when restoring sessions with very large timelines.
+:::
+
 ## Session File Format
 
 The `.tle` file is a JSON structure:

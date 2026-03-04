@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.0.3-beta
+## v1.0.3-beta — March 1, 2026
 
 ### New Features
 
@@ -64,7 +64,7 @@
 - **Status bar** — Shows full file path of active tab (with ellipsis overflow)
 - **Toolbar buttons** — Increased padding and border radius with hover transitions
 
-## v1.0.2-beta
+## v1.0.2-beta — February 28, 2026
 
 ### New Features
 
@@ -156,7 +156,7 @@
 - **Safer filename decoding** — try/catch on decodeURIComponent prevents crash on malformed URIs
 - **React Error Boundary** — Graceful UI crash recovery with "Try to Recover" button
 
-## v1.0.0-beta
+## v1.0.0-beta — February 27, 2026
 
 ### New Features
 
@@ -221,13 +221,13 @@
 - **Progress bar animation** — CSS `transform: scaleX()` for smoother progress rendering
 - **Indexing status indicator** — Toolbar shows column index + FTS build progress with phase labels
 
-## v0.9.1
+## v0.9.1 — February 2026
 
 - Lateral Movement progress bar for processing feedback
 - Stacking glassmorphism for overlapping histogram sources
 - Histogram upgrades and performance improvements
 
-## v0.9.0
+## v0.9.0 — February 2026
 
 ### New Features
 
@@ -252,7 +252,7 @@
 - Release polish and stability improvements
 - Beta tester credits added
 
-## v0.1.0
+## v0.1.0 — January 2026
 
 ### Core Features
 
