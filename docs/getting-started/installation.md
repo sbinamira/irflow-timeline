@@ -33,7 +33,7 @@ If you prefer to build from source:
 ```bash
 # Clone the repository
 git clone https://github.com/r3nzsec/irflow-timeline.git
-cd tle-app
+cd irflow-timeline/tle-app
 
 # Install dependencies
 npm install
@@ -44,11 +44,11 @@ npx electron-rebuild -f -w better-sqlite3
 # Run in development mode
 npm run dev
 
-# Build distributable .app
-npm run dist
-
 # Build DMG installer
 npm run dist:dmg
+
+# Build universal binary (Intel + Apple Silicon)
+npm run dist:universal
 ```
 
 ### Build Script
@@ -74,6 +74,8 @@ After installation, IRFlow Timeline registers as a viewer for the following file
 
 - `.csv` — CSV files
 - `.tsv` — TSV files
-- `.xlsx` — Excel files
+- `.xlsx` — Excel files (OpenXML)
+- `.xls` — Legacy Excel files (binary)
+- `.xlsm` — Macro-enabled Excel files
 - `.plaso` — Plaso timeline databases
 - `.evtx` — Windows Event Log files

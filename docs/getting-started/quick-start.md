@@ -29,7 +29,7 @@ Files over 1GB may take a minute to import. The streaming architecture processes
 
 Once imported, your data appears in a virtual-scrolling grid:
 
-- **Scroll** through millions of rows smoothly — only ~5,000 rows are loaded at a time
+- **Scroll** through millions of rows smoothly — only ~10,000 rows are loaded at a time
 - **Sort** by clicking any column header (click again to toggle ASC/DESC)
 - **Resize columns** by dragging the column header borders
 - **Pin columns** by `Cmd+Click` on a header and selecting Pin Left

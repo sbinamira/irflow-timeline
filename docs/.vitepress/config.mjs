@@ -28,7 +28,7 @@ export default defineConfig({
     ['script', { 'data-goatcounter': 'https://irflowtimeline.goatcounter.com/count', async: '', src: '//gc.zgo.at/count.js' }]
   ],
   themeConfig: {
-    logo: '/logo.png',
+    logo: '/logo.svg',
     nav: [
       { text: 'Home', link: '/' },
       { text: 'Getting Started', link: '/getting-started/installation' },
@@ -145,7 +145,7 @@ export default defineConfig({
     },
     footer: {
       message: 'Built for the DFIR community.',
-      copyright: 'Copyright 2025 IRFlow Timeline'
+      copyright: 'Copyright 2025-2026 IRFlow Timeline'
     },
     editLink: {
       pattern: 'https://github.com/r3nzsec/irflow-timeline/edit/main/docs/:path',

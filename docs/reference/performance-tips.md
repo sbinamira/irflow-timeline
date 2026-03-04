@@ -104,7 +104,7 @@ Search queries are debounced at 500ms — the query only executes after you stop
 
 ### Virtual Scrolling
 
-The grid maintains a window of ~5,000 rows:
+The grid maintains a window of ~10,000 rows:
 
 - Only visible rows (~50) are rendered in the DOM
 - 20-row overscan above and below for smooth scrolling

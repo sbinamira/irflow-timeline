@@ -10,7 +10,7 @@ Technical overview of IRFlow Timeline's architecture for developers and contribu
 
 ### Renderer Process (React)
 
-**File:** `src/App.jsx` (~9,698 lines) + `src/detection-rules.js` (~380 lines)
+**File:** `src/App.jsx` (~11,325 lines) + `src/detection-rules.js` (~380 lines)
 
 The renderer runs in a sandboxed browser context with no direct Node.js access. All system operations go through the IPC bridge.
 
@@ -23,13 +23,13 @@ Responsibilities:
 
 ### Preload Bridge
 
-**File:** `preload.js` (~101 lines)
+**File:** `preload.js` (~107 lines)
 
 The preload script creates a secure bridge between the renderer and main process using Electron's `contextBridge` API. It exposes a controlled set of IPC methods as `window.tle`.
 
 ### Main Process (Electron)
 
-**File:** `main.js` (~1,213 lines)
+**File:** `main.js` (~1,272 lines)
 
 The main process runs with full Node.js access and manages:
 - Window lifecycle and native menus
@@ -41,7 +41,7 @@ The main process runs with full Node.js access and manages:
 
 ### Data Engine (SQLite)
 
-**File:** `db.js` (~4,279 lines)
+**File:** `db.js` (~4,763 lines)
 
 The `TimelineDB` class wraps `better-sqlite3` with forensic-analysis-specific operations:
 
@@ -69,7 +69,7 @@ CREATE TABLE color_rules (id, col_name, condition, value, bg_color, fg_color);
 
 ### Parser Layer
 
-**File:** `parser.js` (~1,094 lines)
+**File:** `parser.js` (~2,133 lines)
 
 Streaming parsers convert source files into SQLite batch inserts:
 
@@ -106,7 +106,7 @@ UI Action → IPC → db.queryRows() → SQL Query → Result Set → IPC → Gr
 1. User scrolls, searches, or filters
 2. Request is debounced (500ms for search/filter)
 3. SQL query is built with active filters, sort, and pagination
-4. Results (up to 5,000 rows) returned via IPC
+4. Results (up to 10,000 rows) returned via IPC
 5. Grid renders visible rows from the cached window
 
 ## Technology Stack

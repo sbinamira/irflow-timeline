@@ -4,7 +4,7 @@ layout: home
 hero:
   name: IRFlow Timeline
   text: DFIR Timeline Analysis
-  tagline: High-performance forensic timeline viewer for MacOS. Handles large files for timeline analysis. CSV/TSV/XLSX/EVTX/Plaso
+  tagline: High-performance forensic timeline viewer for macOS. Handles large files for timeline analysis. CSV/TSV/XLSX/EVTX/Plaso
   actions:
     - theme: brand
       text: Get Started
@@ -19,7 +19,7 @@ features:
     details: Phase-tuned SQLite engine with 1GB import cache, adaptive 100K-row batches, and background async indexing. Sub-100ms filtered queries on 10M+ rows. Handles 30GB+ files without breaking a sweat.
   - icon: '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#E85D2A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/><line x1="11" y1="8" x2="11" y2="14"/></svg>'
     title: 5 Search Modes
-    details: Mixed, OR, AND, Exact, and Regex modes. Find exactly what you need across massive timelines with full-text search, boolean operators, and pattern matching.
+    details: Mixed, FTS, LIKE, Fuzzy, and Regex modes. Find exactly what you need across massive timelines with full-text search, substring matching, typo-tolerant fuzzy search, and pattern matching.
   - icon: '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#E85D2A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v6"/><circle cx="12" cy="12" r="3"/><path d="M12 15v3"/><path d="M8 15l-3 3"/><path d="M16 15l3 3"/><path d="M5 18v2"/><path d="M12 18v2"/><path d="M19 18v2"/></svg>'
     title: Process Inspector
     details: GUID-preferred process hierarchy from Sysmon (EventID 1) and Windows Security (4688) logs with 4-tier threat scoring — critical for direct malware indicators, high for likely malicious activity, medium for suspicious patterns needing context, low for informational.
