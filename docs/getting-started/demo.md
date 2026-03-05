@@ -31,12 +31,24 @@ The 50 events above tell the story of a complete attack chain across 7 phases:
 | **Regex** | Full regular expression with `new RegExp(pattern, 'i')` | `\d+\.\d+` matches IP addresses, `PsExec\|wmic` matches either |
 | **Fuzzy** | Bigram similarity — tolerates typos and partial matches | `mimkatz` still finds mimikatz, `powrshell` finds powershell |
 
+## Lateral Movement Tracker
+
+Below the grid you'll see a **network graph** showing how the attacker moved between machines. The key insight: IRFlow immediately identifies the threat actor's machine by hostname pattern matching.
+
+In this scenario, the attacker connected via RDP from a machine named **KALI** — the default Kali Linux hostname. IRFlow's two-tier outlier detection automatically flags this:
+
+- **Tier 1 (Red)**: Known attacker OS defaults — `KALI`, `PARROT`, `HACKER`, `ATTACKER`
+- **Tier 2 (Orange)**: Suspicious patterns — `DESKTOP-XXXXXXX`, `WIN-XXXXXXXX`, `VPS`, `WINVM`
+
+Click any node in the graph to highlight its connections.
+
 ## Tips
 
 - **Click column headers** to sort ascending, click again for descending, third click to reset
 - **Click any row** to expand full details (especially useful on mobile)
 - **Press Escape** to clear the search field
 - The **sparkline** in the results bar updates live to show event density as you filter
+- **Click graph nodes** to highlight connections in the lateral movement tracker
 
 ## Ready for the Real Thing?
 

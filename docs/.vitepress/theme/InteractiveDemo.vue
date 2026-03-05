@@ -150,6 +150,183 @@
         </div>
       </div>
 
+      <!-- Lateral Movement Tracker -->
+      <div class="lateral-section" :style="{ opacity: showLateral ? 1 : 0, transform: showLateral ? 'translateY(0)' : 'translateY(10px)' }">
+        <div class="lateral-header">
+          <div class="lateral-title-row">
+            <span class="lateral-title">LATERAL MOVEMENT TRACKER</span>
+            <span class="lateral-badge badge-red">OUTLIER DETECTED</span>
+          </div>
+          <div class="lateral-stats">
+            <div class="lat-stat">
+              <span class="lat-stat-val" style="color: #E8613A;">6</span>
+              <span class="lat-stat-label">HOSTS</span>
+            </div>
+            <div class="lat-stat">
+              <span class="lat-stat-val" style="color: #58a6ff;">6</span>
+              <span class="lat-stat-label">CONNECTIONS</span>
+            </div>
+            <div class="lat-stat">
+              <span class="lat-stat-val" style="color: #FFB020;">4</span>
+              <span class="lat-stat-label">CHAIN DEPTH</span>
+            </div>
+            <div class="lat-stat">
+              <span class="lat-stat-val lat-stat-danger">1</span>
+              <span class="lat-stat-label">OUTLIERS</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Network Graph SVG -->
+        <div class="lateral-graph-wrap">
+          <svg viewBox="0 0 700 250" class="lateral-svg" aria-label="Lateral movement network graph">
+            <defs>
+              <marker id="arrowBlue" viewBox="0 0 10 10" refX="22" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#58a6ff" />
+              </marker>
+              <marker id="arrowGreen" viewBox="0 0 10 10" refX="22" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#3fb950" />
+              </marker>
+              <marker id="arrowRed" viewBox="0 0 10 10" refX="22" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#FF3B3B" />
+              </marker>
+            </defs>
+
+            <!-- Edges -->
+            <g v-for="(edge, i) in latEdges" :key="'le' + i">
+              <line
+                :x1="latNodes[edge.from].x" :y1="latNodes[edge.from].y"
+                :x2="latNodes[edge.to].x" :y2="latNodes[edge.to].y"
+                :stroke="edge.color" :stroke-width="edge.w || 1.5"
+                :stroke-opacity="selectedNode && selectedNode !== latNodes[edge.from].id && selectedNode !== latNodes[edge.to].id ? 0.15 : 0.6"
+                :stroke-dasharray="edge.dashed ? '4 3' : 'none'"
+                :marker-end="`url(#arrow${edge.arrowColor})`"
+              />
+              <text
+                :x="(latNodes[edge.from].x + latNodes[edge.to].x) / 2 + (edge.labelOff?.[0] || 0)"
+                :y="(latNodes[edge.from].y + latNodes[edge.to].y) / 2 + (edge.labelOff?.[1] || -6)"
+                :fill="edge.color" font-size="8" text-anchor="middle" font-family="monospace"
+                :opacity="selectedNode && selectedNode !== latNodes[edge.from].id && selectedNode !== latNodes[edge.to].id ? 0.2 : 0.8"
+              >{{ edge.label }}</text>
+            </g>
+
+            <!-- Nodes -->
+            <g v-for="(node, i) in latNodes" :key="'ln' + i"
+              @click.stop="selectNode(node.id)"
+              style="cursor: pointer;"
+            >
+              <!-- Outlier node (KALI) — red pulsing dashed ring -->
+              <template v-if="node.type === 'outlier'">
+                <circle :cx="node.x" :cy="node.y" r="26" fill="#FF3B3B" opacity="0.06" />
+                <circle :cx="node.x" :cy="node.y" r="26" fill="none" stroke="#FF3B3B" stroke-width="1.5"
+                  stroke-dasharray="5 3" class="outlier-pulse"
+                  :opacity="selectedNode === node.id ? 0.9 : 0.5" />
+                <rect :x="node.x - 14" :y="node.y - 10" width="28" height="20" rx="3"
+                  :fill="selectedNode === node.id ? '#FF3B3B35' : '#FF3B3B18'"
+                  stroke="#FF3B3B" :stroke-width="selectedNode === node.id ? 1.5 : 0.8" />
+                <text :x="node.x" :y="node.y + 4" fill="#FF3B3B" font-size="11" text-anchor="middle"
+                  font-family="monospace" font-weight="700">{{ node.label }}</text>
+                <!-- Warning triangle -->
+                <polygon :points="`${node.x+18},${node.y-18} ${node.x+14},${node.y-10} ${node.x+22},${node.y-10}`"
+                  fill="#FF3B3B" />
+                <text :x="node.x+18" :y="node.y-13" fill="#0D0D0D" font-size="7" text-anchor="middle"
+                  font-weight="800">!</text>
+                <!-- Label below -->
+                <text :x="node.x" :y="node.y + 42" fill="#FF3B3B" font-size="8" text-anchor="middle"
+                  font-family="monospace" font-weight="600" opacity="0.9">OUTLIER</text>
+                <text :x="node.x" :y="node.y + 52" fill="#888" font-size="7" text-anchor="middle"
+                  font-family="monospace">Kali Linux default</text>
+              </template>
+
+              <!-- Pivot node (both source & target) — purple -->
+              <template v-else-if="node.type === 'pivot'">
+                <rect :x="node.x - 18" :y="node.y - 10" width="36" height="20" rx="3"
+                  :fill="selectedNode === node.id ? '#a371f725' : '#a371f712'"
+                  stroke="#a371f7" :stroke-width="selectedNode === node.id ? 1.5 : 0.8" />
+                <text :x="node.x" :y="node.y + 4" fill="#CCC" font-size="9" text-anchor="middle"
+                  font-family="monospace">{{ node.label }}</text>
+                <text :x="node.x" :y="node.y + 28" fill="#a371f7" font-size="7" text-anchor="middle"
+                  font-family="monospace" opacity="0.7">PIVOT</text>
+              </template>
+
+              <!-- DC node — square, blue -->
+              <template v-else-if="node.type === 'dc'">
+                <rect :x="node.x - 14" :y="node.y - 10" width="28" height="20" rx="2"
+                  :fill="selectedNode === node.id ? '#58a6ff25' : '#58a6ff12'"
+                  stroke="#58a6ff" :stroke-width="selectedNode === node.id ? 1.5 : 0.8" />
+                <text :x="node.x" :y="node.y + 4" fill="#CCC" font-size="9" text-anchor="middle"
+                  font-family="monospace">{{ node.label }}</text>
+                <text :x="node.x" :y="node.y + 28" fill="#58a6ff" font-size="7" text-anchor="middle"
+                  font-family="monospace" opacity="0.7">{{ node.role }}</text>
+              </template>
+
+              <!-- Server node — rounded rect, green -->
+              <template v-else>
+                <rect :x="node.x - 22" :y="node.y - 10" width="44" height="20" rx="3"
+                  :fill="selectedNode === node.id ? '#3fb95025' : '#3fb95012'"
+                  stroke="#3fb950" :stroke-width="selectedNode === node.id ? 1.5 : 0.8" />
+                <text :x="node.x" :y="node.y + 4" fill="#CCC" font-size="8" text-anchor="middle"
+                  font-family="monospace">{{ node.label }}</text>
+                <text :x="node.x" :y="node.y + 28" fill="#3fb950" font-size="7" text-anchor="middle"
+                  font-family="monospace" opacity="0.7">{{ node.role }}</text>
+              </template>
+            </g>
+
+            <!-- Legend -->
+            <g transform="translate(10, 215)">
+              <rect x="0" y="0" width="200" height="28" rx="4" fill="#16161680" stroke="#333" stroke-width="0.5" />
+              <circle cx="14" cy="14" r="4" fill="none" stroke="#FF3B3B" stroke-width="1" stroke-dasharray="2 1" />
+              <text x="24" y="18" fill="#888" font-size="7" font-family="monospace">Outlier</text>
+              <rect x="64" y="10" width="8" height="8" rx="1" fill="none" stroke="#a371f7" stroke-width="0.8" />
+              <text x="77" y="18" fill="#888" font-size="7" font-family="monospace">Pivot</text>
+              <line x1="112" y1="14" x2="126" y2="14" stroke="#58a6ff" stroke-width="1.5" />
+              <text x="131" y="18" fill="#888" font-size="7" font-family="monospace">RDP</text>
+              <line x1="156" y1="14" x2="170" y2="14" stroke="#3fb950" stroke-width="1.5" />
+              <text x="175" y="18" fill="#888" font-size="7" font-family="monospace">Net</text>
+            </g>
+          </svg>
+        </div>
+
+        <!-- Outlier finding callout -->
+        <div class="lateral-finding">
+          <div class="finding-icon">&#x26A0;</div>
+          <div class="finding-content">
+            <div class="finding-title">
+              <span class="finding-sev">CRITICAL</span>
+              Outlier Host Detected — Possible Threat Actor Workstation
+            </div>
+            <div class="finding-detail">
+              Hostname <span class="finding-hl">KALI</span> matches Kali Linux default naming pattern.
+              This machine initiated the RDP session to <span class="finding-hl">WS-PC01</span> and is likely
+              the attacker's workstation. IRFlow flags these automatically using hostname pattern matching.
+            </div>
+            <div class="finding-chain">
+              <span class="chain-label">ATTACK CHAIN</span>
+              <span class="chain-node chain-outlier">KALI</span>
+              <span class="chain-arrow">&rarr;</span>
+              <span class="chain-node chain-pivot">WS-PC01</span>
+              <span class="chain-arrow">&rarr;</span>
+              <span class="chain-node chain-dc">DC01</span>
+              <span class="chain-arrow">&rarr;</span>
+              <span class="chain-node chain-srv">SRV-DB01</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Detection patterns callout -->
+        <div class="lateral-patterns">
+          <span class="patterns-title">OUTLIER PATTERNS</span>
+          <div class="patterns-grid">
+            <span class="pattern-chip pattern-match">KALI</span>
+            <span class="pattern-chip">PARROT</span>
+            <span class="pattern-chip">DESKTOP-XXXXX</span>
+            <span class="pattern-chip">WIN-XXXXX</span>
+            <span class="pattern-chip">HACKER</span>
+            <span class="pattern-chip">ATTACKER</span>
+          </div>
+        </div>
+      </div>
+
       <!-- Status bar -->
       <div class="demo-status-bar">
         <div class="status-left">
@@ -193,6 +370,31 @@ const scanLine = ref(0)
 const animatedRows = ref(0)
 const searchInput = ref(null)
 const isMobile = ref(false)
+const showLateral = ref(false)
+const selectedNode = ref(null)
+
+// ── Lateral Movement Graph Data ──
+const latNodes = [
+  { id: 'KALI',       x: 80,  y: 90,  label: 'KALI',       type: 'outlier' },
+  { id: 'WS-PC01',    x: 250, y: 110, label: 'WS-PC01',    type: 'pivot' },
+  { id: 'DC01',       x: 420, y: 60,  label: 'DC01',        type: 'dc', role: 'Domain Controller' },
+  { id: 'SRV-DB01',   x: 590, y: 60,  label: 'SRV-DB01',   type: 'server', role: 'Database' },
+  { id: 'SRV-WEB01',  x: 420, y: 170, label: 'SRV-WEB01',  type: 'server', role: 'Web Server' },
+  { id: 'SRV-FILE02', x: 590, y: 170, label: 'SRV-FILE02', type: 'server', role: 'File Server' },
+]
+
+const latEdges = [
+  { from: 0, to: 1, color: '#58a6ff', arrowColor: 'Blue', w: 2,   label: 'RDP ×1',     labelOff: [0, -8] },
+  { from: 1, to: 2, color: '#3fb950', arrowColor: 'Green', w: 2.5, label: 'PsExec ×12', labelOff: [0, -8] },
+  { from: 1, to: 4, color: '#3fb950', arrowColor: 'Green', w: 1.5, label: 'WMIC ×2',    labelOff: [-15, 0] },
+  { from: 1, to: 5, color: '#3fb950', arrowColor: 'Green', w: 1.5, label: 'SMB ×5',     labelOff: [0, 12] },
+  { from: 2, to: 3, color: '#58a6ff', arrowColor: 'Blue', w: 1.5,  label: 'RDP ×3',     labelOff: [0, -8] },
+  { from: 2, to: 5, color: '#3fb950', arrowColor: 'Green', w: 1.5, label: 'WinRM ×4',   labelOff: [15, 0] },
+]
+
+function selectNode(id) {
+  selectedNode.value = selectedNode.value === id ? null : id
+}
 
 // ── Sample Data: 50 rows telling an attack story ──
 const SAMPLE_DATA = [
@@ -201,7 +403,7 @@ const SAMPLE_DATA = [
   { id: 2,  Timestamp: '2025-02-14 03:10:15', Source: 'Sysmon.evtx',   EventID: 1,    Computer: 'WS-PC01', Detail: 'outlook.exe spawned WINWORD.EXE', severity: 'medium' },
   { id: 3,  Timestamp: '2025-02-14 03:10:22', Source: 'Sysmon.evtx',   EventID: 11,   Computer: 'WS-PC01', Detail: 'FileCreate: C:\\Users\\jsmith\\Q4-Report.docm', severity: 'high' },
   { id: 4,  Timestamp: '2025-02-14 03:10:30', Source: 'Sysmon.evtx',   EventID: 1,    Computer: 'WS-PC01', Detail: 'WINWORD.EXE spawned cmd.exe /c macro', severity: 'critical' },
-  { id: 5,  Timestamp: '2025-02-14 03:10:45', Source: 'Security.evtx', EventID: 4624, Computer: 'WS-PC01', Detail: 'Logon Type 10 - RDP from 10.0.1.50', severity: 'high' },
+  { id: 5,  Timestamp: '2025-02-14 03:10:45', Source: 'Security.evtx', EventID: 4624, Computer: 'WS-PC01', Detail: 'Logon Type 10 - RDP from 10.0.1.50 (WorkstationName: KALI)', severity: 'high' },
 
   // Phase 2: Execution (6-12)
   { id: 6,  Timestamp: '2025-02-14 03:11:02', Source: 'Sysmon.evtx',   EventID: 1,    Computer: 'WS-PC01', Detail: 'cmd.exe spawned powershell.exe -enc base64blob', severity: 'critical' },
@@ -459,6 +661,7 @@ onMounted(() => {
 
   if (prefersReducedMotion) {
     animatedRows.value = SAMPLE_DATA.length
+    showLateral.value = true
     return
   }
 
@@ -469,6 +672,9 @@ onMounted(() => {
     animatedRows.value = Math.min(count, SAMPLE_DATA.length)
     if (count >= SAMPLE_DATA.length) clearInterval(rowTimer)
   }, 30)
+
+  // Show lateral movement panel after rows load
+  setTimeout(() => { showLateral.value = true }, 800)
 
   // Scan line
   let scanPos = 0
@@ -820,6 +1026,197 @@ watch(searchQuery, () => { expandedRow.value = null })
 .status-green { color: #28C840; margin-right: 4px !important; }
 .status-accent { font-size: 9px; color: #E8613A; line-height: 1; white-space: nowrap; }
 
+/* ── Lateral Movement Tracker ── */
+.lateral-section {
+  border-top: 1px solid #222;
+  transition: all 0.6s ease;
+}
+.lateral-header {
+  padding: 16px 24px 12px !important;
+  background: #161616;
+  border-bottom: 1px solid #222;
+}
+.lateral-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.lateral-title {
+  font-size: 10px;
+  color: #777;
+  letter-spacing: 1.5px;
+  font-weight: 600;
+  line-height: 1;
+}
+.lateral-badge {
+  font-size: 9px;
+  padding: 3px 10px !important;
+  border-radius: 3px;
+  line-height: 1;
+  font-weight: 600;
+}
+.badge-red {
+  color: #FF3B3B;
+  background: #FF3B3B15;
+  animation: badge-pulse 2s ease-in-out infinite;
+}
+@keyframes badge-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+.lateral-stats {
+  display: flex;
+  gap: 0;
+}
+.lat-stat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 12px !important;
+  border-right: 1px solid #222;
+}
+.lat-stat:last-child { border-right: none; }
+.lat-stat-val {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+.lat-stat-danger {
+  color: #FF3B3B;
+}
+.lat-stat-label {
+  font-size: 8px;
+  color: #555;
+  letter-spacing: 1.2px;
+  line-height: 1;
+}
+
+.lateral-graph-wrap {
+  padding: 8px 16px !important;
+  background: #0D0D0D;
+  border-bottom: 1px solid #222;
+}
+.lateral-svg {
+  width: 100%;
+  max-height: 260px;
+}
+
+/* Outlier pulse animation */
+.outlier-pulse {
+  animation: outlier-ring 2s ease-in-out infinite;
+}
+@keyframes outlier-ring {
+  0%, 100% { stroke-opacity: 0.5; r: 26; }
+  50% { stroke-opacity: 0.9; r: 29; }
+}
+
+/* Finding callout */
+.lateral-finding {
+  display: flex;
+  gap: 12px;
+  padding: 14px 24px !important;
+  background: #FF3B3B08;
+  border-bottom: 1px solid #FF3B3B22;
+  border-left: 3px solid #FF3B3B;
+}
+.finding-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+  line-height: 1.2;
+}
+.finding-content { flex: 1; }
+.finding-title {
+  font-size: 11px;
+  color: #CCC;
+  font-weight: 600;
+  margin-bottom: 6px;
+  line-height: 1.4;
+}
+.finding-sev {
+  font-size: 9px;
+  color: #FF3B3B;
+  background: #FF3B3B18;
+  padding: 2px 6px !important;
+  border-radius: 2px;
+  font-weight: 700;
+  margin-right: 8px !important;
+  vertical-align: middle;
+}
+.finding-detail {
+  font-size: 11px;
+  color: #888;
+  line-height: 1.5;
+  margin-bottom: 10px;
+}
+.finding-hl {
+  color: #E8613A;
+  font-weight: 600;
+}
+
+/* Attack chain display */
+.finding-chain {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.chain-label {
+  font-size: 8px;
+  color: #555;
+  letter-spacing: 1px;
+  margin-right: 4px !important;
+}
+.chain-node {
+  font-size: 10px;
+  padding: 2px 8px !important;
+  border-radius: 3px;
+  font-weight: 600;
+}
+.chain-outlier { color: #FF3B3B; background: #FF3B3B18; border: 1px solid #FF3B3B33; }
+.chain-pivot { color: #a371f7; background: #a371f712; border: 1px solid #a371f733; }
+.chain-dc { color: #58a6ff; background: #58a6ff12; border: 1px solid #58a6ff33; }
+.chain-srv { color: #3fb950; background: #3fb95012; border: 1px solid #3fb95033; }
+.chain-arrow { color: #555; font-size: 12px; }
+
+/* Detection patterns */
+.lateral-patterns {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 24px !important;
+  background: #131313;
+  border-bottom: 1px solid #222;
+  flex-wrap: wrap;
+}
+.patterns-title {
+  font-size: 8px;
+  color: #555;
+  letter-spacing: 1.2px;
+  white-space: nowrap;
+}
+.patterns-grid {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.pattern-chip {
+  font-size: 10px;
+  color: #777;
+  background: #1C1C1C;
+  border: 1px solid #333;
+  border-radius: 3px;
+  padding: 2px 8px !important;
+  font-family: inherit;
+}
+.pattern-match {
+  color: #FF3B3B;
+  background: #FF3B3B12;
+  border-color: #FF3B3B44;
+  font-weight: 600;
+}
+
 /* ── Responsive ── */
 @media (max-width: 960px) {
   .grid-header, .grid-row {
@@ -829,9 +1226,14 @@ watch(searchQuery, () => { expandedRow.value = null })
   .mode-label { display: none; }
   .mode-btn { padding: 6px 8px !important; }
   .demo-graphic { border-radius: 8px; }
+  .lateral-stats { flex-wrap: wrap; }
+  .lat-stat { min-width: 70px; }
 }
 
 @media (max-width: 640px) {
+  .lateral-finding { flex-direction: column; gap: 6px; }
+  .lateral-stats { display: grid; grid-template-columns: 1fr 1fr; }
+  .lateral-patterns { overflow-x: auto; flex-wrap: nowrap; }
   .title-text { display: none; }
   .grid-header, .grid-row {
     grid-template-columns: 130px 1fr;
@@ -849,6 +1251,9 @@ watch(searchQuery, () => { expandedRow.value = null })
 @media (prefers-reduced-motion: reduce) {
   .scan-line { display: none; }
   .grid-row { transition: none !important; opacity: 1 !important; transform: none !important; }
+  .lateral-section { transition: none !important; opacity: 1 !important; transform: none !important; }
+  .outlier-pulse { animation: none !important; }
+  .badge-red { animation: none !important; }
 }
 
 /* ── Scrollbar ── */
