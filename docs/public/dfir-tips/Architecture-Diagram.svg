@@ -89,14 +89,14 @@
     <rect x="465" y="0" width="140" height="68" rx="7" fill="rgba(232,93,42,0.08)" stroke="rgba(232,93,42,0.25)" stroke-width="1"/>
     <svg x="477" y="14" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#E85D2A" stroke-width="2" stroke-linecap="round" opacity="0.8"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
     <text x="499" y="26" fill="#e6edf3" font-size="11.5" font-weight="600">Detection</text>
-    <text x="477" y="48" fill="#8b949e" font-size="9.5">342 MITRE ATT&amp;CK</text>
-    <text x="477" y="60" fill="#8b949e" font-size="9.5">chain rules</text>
+    <text x="477" y="48" fill="#8b949e" font-size="9.5">342 chain rules +</text>
+    <text x="477" y="60" fill="#8b949e" font-size="9.5">13 standalone patterns</text>
 
     <!-- State -->
     <rect x="620" y="0" width="140" height="68" rx="7" fill="rgba(232,93,42,0.08)" stroke="rgba(232,93,42,0.25)" stroke-width="1"/>
     <svg x="632" y="14" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#E85D2A" stroke-width="2" stroke-linecap="round" opacity="0.8"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
     <text x="654" y="26" fill="#e6edf3" font-size="11.5" font-weight="600">State</text>
-    <text x="632" y="48" fill="#8b949e" font-size="9.5">40+ useState hooks</text>
+    <text x="632" y="48" fill="#8b949e" font-size="9.5">24 KAPE profiles</text>
     <text x="632" y="60" fill="#8b949e" font-size="9.5">Dark / Light theme</text>
   </g>
 
@@ -108,37 +108,42 @@
   <!-- ========== MAIN PROCESS LAYER ========== -->
   <rect x="40" y="198" width="820" height="130" rx="10" fill="url(#mainGrad)" stroke="#58a6ff" stroke-width="1.5" filter="url(#shadow)"/>
   <!-- Layer icon -->
-  <svg x="55" y="40" width="0" height="0"/>
   <rect x="56" y="216" width="22" height="16" rx="3" fill="none" stroke="#58a6ff" stroke-width="1.2" opacity="0.7"/>
   <circle cx="67" cy="220" r="2" fill="#58a6ff" opacity="0.5"/>
   <text x="86" y="228" fill="#58a6ff" font-size="13" font-weight="700" letter-spacing="0.5">ELECTRON MAIN PROCESS</text>
-  <text x="295" y="228" fill="#8b949e" font-size="11">main.js · preload.js</text>
+  <text x="295" y="228" fill="#8b949e" font-size="11">main.js · preload.js · updater.js · logger.js</text>
 
   <!-- Main sub-items -->
   <g transform="translate(60, 245)">
-    <rect x="0" y="0" width="185" height="68" rx="7" fill="rgba(88,166,255,0.08)" stroke="rgba(88,166,255,0.25)" stroke-width="1"/>
+    <rect x="0" y="0" width="143" height="68" rx="7" fill="rgba(88,166,255,0.08)" stroke="rgba(88,166,255,0.25)" stroke-width="1"/>
     <svg x="12" y="14" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#58a6ff" stroke-width="2" stroke-linecap="round" opacity="0.8"><path d="M8 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-3"/><path d="M18 8l4-4-4-4"/><path d="M22 4H12"/></svg>
-    <text x="34" y="26" fill="#e6edf3" font-size="11.5" font-weight="600">48 IPC Handlers</text>
+    <text x="34" y="26" fill="#e6edf3" font-size="11.5" font-weight="600">69 IPC Handlers</text>
     <text x="12" y="48" fill="#8b949e" font-size="9.5">safeHandle() wrappers</text>
-    <text x="12" y="60" fill="#8b949e" font-size="9.5">window.tle bridge</text>
+    <text x="12" y="60" fill="#8b949e" font-size="9.5">132 window.tle methods</text>
 
-    <rect x="200" y="0" width="185" height="68" rx="7" fill="rgba(88,166,255,0.08)" stroke="rgba(88,166,255,0.25)" stroke-width="1"/>
-    <svg x="212" y="14" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#58a6ff" stroke-width="2" stroke-linecap="round" opacity="0.8"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
-    <text x="234" y="26" fill="#e6edf3" font-size="11.5" font-weight="600">File Dialogs &amp; Menus</text>
-    <text x="212" y="48" fill="#8b949e" font-size="9.5">Native macOS menus</text>
-    <text x="212" y="60" fill="#8b949e" font-size="9.5">Open Recent · Sheet picker</text>
+    <rect x="153" y="0" width="143" height="68" rx="7" fill="rgba(88,166,255,0.08)" stroke="rgba(88,166,255,0.25)" stroke-width="1"/>
+    <svg x="165" y="14" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#58a6ff" stroke-width="2" stroke-linecap="round" opacity="0.8"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
+    <text x="187" y="26" fill="#e6edf3" font-size="11.5" font-weight="600">File &amp; Menus</text>
+    <text x="165" y="48" fill="#8b949e" font-size="9.5">Native macOS menus</text>
+    <text x="165" y="60" fill="#8b949e" font-size="9.5">Open Recent · Sheets</text>
 
-    <rect x="400" y="0" width="185" height="68" rx="7" fill="rgba(88,166,255,0.08)" stroke="rgba(88,166,255,0.25)" stroke-width="1"/>
-    <svg x="412" y="14" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#58a6ff" stroke-width="2" stroke-linecap="round" opacity="0.8"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-    <text x="434" y="26" fill="#e6edf3" font-size="11.5" font-weight="600">Session &amp; Export</text>
-    <text x="412" y="48" fill="#8b949e" font-size="9.5">Save / Load .tle files</text>
-    <text x="412" y="60" fill="#8b949e" font-size="9.5">CSV · TSV · XLSX · XLS · HTML</text>
+    <rect x="306" y="0" width="143" height="68" rx="7" fill="rgba(88,166,255,0.08)" stroke="rgba(88,166,255,0.25)" stroke-width="1"/>
+    <svg x="318" y="14" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#58a6ff" stroke-width="2" stroke-linecap="round" opacity="0.8"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+    <text x="340" y="26" fill="#e6edf3" font-size="11.5" font-weight="600">Session &amp; Export</text>
+    <text x="318" y="48" fill="#8b949e" font-size="9.5">Save / Load .tle files</text>
+    <text x="318" y="60" fill="#8b949e" font-size="9.5">CSV · XLSX · HTML · PDF</text>
 
-    <rect x="600" y="0" width="160" height="68" rx="7" fill="rgba(88,166,255,0.08)" stroke="rgba(88,166,255,0.25)" stroke-width="1"/>
-    <svg x="612" y="14" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#58a6ff" stroke-width="2" stroke-linecap="round" opacity="0.8"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-    <text x="634" y="26" fill="#e6edf3" font-size="11.5" font-weight="600">macOS Native</text>
-    <text x="612" y="48" fill="#8b949e" font-size="9.5">Vibrancy · Dark mode</text>
-    <text x="612" y="60" fill="#8b949e" font-size="9.5">Traffic lights</text>
+    <rect x="459" y="0" width="143" height="68" rx="7" fill="rgba(88,166,255,0.08)" stroke="rgba(88,166,255,0.25)" stroke-width="1"/>
+    <svg x="471" y="14" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#58a6ff" stroke-width="2" stroke-linecap="round" opacity="0.8"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M12 8v4"/><circle cx="12" cy="16" r="1"/></svg>
+    <text x="493" y="26" fill="#e6edf3" font-size="11.5" font-weight="600">VT &amp; Updater</text>
+    <text x="471" y="48" fill="#8b949e" font-size="9.5">VirusTotal cache DB</text>
+    <text x="471" y="60" fill="#8b949e" font-size="9.5">Auto-update lifecycle</text>
+
+    <rect x="612" y="0" width="143" height="68" rx="7" fill="rgba(88,166,255,0.08)" stroke="rgba(88,166,255,0.25)" stroke-width="1"/>
+    <svg x="624" y="14" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#58a6ff" stroke-width="2" stroke-linecap="round" opacity="0.8"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+    <text x="646" y="26" fill="#e6edf3" font-size="11.5" font-weight="600">macOS Native</text>
+    <text x="624" y="48" fill="#8b949e" font-size="9.5">Vibrancy · Dark mode</text>
+    <text x="624" y="60" fill="#8b949e" font-size="9.5">Traffic lights</text>
   </g>
 
   <!-- ========== ARROW: Main → DB ========== -->
@@ -155,23 +160,29 @@
 
   <!-- DB sub-items -->
   <g transform="translate(60, 413)">
-    <rect x="0" y="0" width="185" height="68" rx="7" fill="rgba(63,185,80,0.08)" stroke="rgba(63,185,80,0.25)" stroke-width="1"/>
+    <rect x="0" y="0" width="140" height="68" rx="7" fill="rgba(63,185,80,0.08)" stroke="rgba(63,185,80,0.25)" stroke-width="1"/>
     <svg x="12" y="14" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3fb950" stroke-width="2" stroke-linecap="round" opacity="0.8"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
     <text x="34" y="26" fill="#e6edf3" font-size="11.5" font-weight="600">TimelineDB</text>
-    <text x="12" y="48" fill="#8b949e" font-size="9.5">40+ methods · FTS5</text>
-    <text x="12" y="60" fill="#8b949e" font-size="9.5">REGEXP · FUZZY_MATCH</text>
+    <text x="12" y="48" fill="#8b949e" font-size="9.5">FTS5 · 5 SQL funcs</text>
+    <text x="12" y="60" fill="#8b949e" font-size="9.5">REGEXP · FUZZY</text>
 
-    <rect x="200" y="0" width="185" height="68" rx="7" fill="rgba(63,185,80,0.08)" stroke="rgba(63,185,80,0.25)" stroke-width="1"/>
-    <svg x="212" y="14" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3fb950" stroke-width="2" stroke-linecap="round" opacity="0.8"><path d="M12 3v6"/><circle cx="12" cy="12" r="3"/><path d="M12 15v3"/><path d="M8 15l-3 3"/><path d="M16 15l3 3"/></svg>
-    <text x="234" y="26" fill="#e6edf3" font-size="11.5" font-weight="600">Process Inspector</text>
-    <text x="212" y="48" fill="#8b949e" font-size="9.5">GUID linking · PID</text>
-    <text x="212" y="60" fill="#8b949e" font-size="9.5">re-linking · 4688 support</text>
+    <rect x="150" y="0" width="140" height="68" rx="7" fill="rgba(63,185,80,0.08)" stroke="rgba(63,185,80,0.25)" stroke-width="1"/>
+    <svg x="162" y="14" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3fb950" stroke-width="2" stroke-linecap="round" opacity="0.8"><path d="M12 3v6"/><circle cx="12" cy="12" r="3"/><path d="M12 15v3"/><path d="M8 15l-3 3"/><path d="M16 15l3 3"/></svg>
+    <text x="184" y="26" fill="#e6edf3" font-size="11.5" font-weight="600">Process Inspector</text>
+    <text x="162" y="48" fill="#8b949e" font-size="9.5">GUID linking · PID</text>
+    <text x="162" y="60" fill="#8b949e" font-size="9.5">re-linking · 4688</text>
 
-    <rect x="400" y="0" width="185" height="68" rx="7" fill="rgba(63,185,80,0.08)" stroke="rgba(63,185,80,0.25)" stroke-width="1"/>
-    <svg x="412" y="14" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3fb950" stroke-width="2" stroke-linecap="round" opacity="0.8"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="18" r="3"/><line x1="8.5" y1="7.5" x2="15.5" y2="16.5"/><line x1="6" y1="9" x2="6" y2="15"/></svg>
-    <text x="434" y="26" fill="#e6edf3" font-size="11.5" font-weight="600">Lateral Movement</text>
-    <text x="412" y="48" fill="#8b949e" font-size="9.5">RDP correlation · Chains</text>
-    <text x="412" y="60" fill="#8b949e" font-size="9.5">Impacket · Attack detection</text>
+    <rect x="300" y="0" width="140" height="68" rx="7" fill="rgba(63,185,80,0.08)" stroke="rgba(63,185,80,0.25)" stroke-width="1"/>
+    <svg x="312" y="14" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3fb950" stroke-width="2" stroke-linecap="round" opacity="0.8"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="18" r="3"/><line x1="8.5" y1="7.5" x2="15.5" y2="16.5"/><line x1="6" y1="9" x2="6" y2="15"/></svg>
+    <text x="334" y="26" fill="#e6edf3" font-size="11.5" font-weight="600">Lateral Movement</text>
+    <text x="312" y="48" fill="#8b949e" font-size="9.5">RDP · Chains</text>
+    <text x="312" y="60" fill="#8b949e" font-size="9.5">Impacket · Attacks</text>
+
+    <rect x="450" y="0" width="140" height="68" rx="7" fill="rgba(63,185,80,0.08)" stroke="rgba(63,185,80,0.25)" stroke-width="1"/>
+    <svg x="462" y="14" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3fb950" stroke-width="2" stroke-linecap="round" opacity="0.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+    <text x="484" y="26" fill="#e6edf3" font-size="11.5" font-weight="600">NTFS Analysis</text>
+    <text x="462" y="48" fill="#8b949e" font-size="9.5">MFT · USN Journal</text>
+    <text x="462" y="60" fill="#8b949e" font-size="9.5">Ransomware · ADS</text>
 
     <rect x="600" y="0" width="160" height="68" rx="7" fill="rgba(63,185,80,0.08)" stroke="rgba(63,185,80,0.25)" stroke-width="1"/>
     <svg x="612" y="14" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3fb950" stroke-width="2" stroke-linecap="round" opacity="0.8"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>
@@ -190,29 +201,43 @@
   <!-- Layer icon -->
   <svg x="57" y="552" width="20" height="18" viewBox="0 0 24 24" fill="none" stroke="#d29922" stroke-width="1.5" stroke-linecap="round" opacity="0.7"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
   <text x="86" y="566" fill="#d29922" font-size="13" font-weight="700" letter-spacing="0.5">PARSER LAYER</text>
-  <text x="215" y="566" fill="#8b949e" font-size="11">parser.js · Streaming parsers</text>
+  <text x="215" y="566" fill="#8b949e" font-size="11">parser.js · 7 format parsers</text>
 
-  <!-- Parser sub-items -->
+  <!-- Parser sub-items (7 boxes) -->
   <g transform="translate(60, 580)">
-    <rect x="0" y="0" width="140" height="58" rx="7" fill="rgba(210,153,34,0.08)" stroke="rgba(210,153,34,0.25)" stroke-width="1"/>
-    <text x="14" y="22" fill="#e6edf3" font-size="11.5" font-weight="600">CSV / TSV</text>
-    <text x="14" y="42" fill="#8b949e" font-size="9.5">128MB chunks</text>
-    <text x="14" y="52" fill="#8b949e" font-size="9.5">RFC 4180</text>
+    <rect x="0" y="0" width="100" height="58" rx="7" fill="rgba(210,153,34,0.08)" stroke="rgba(210,153,34,0.25)" stroke-width="1"/>
+    <text x="12" y="22" fill="#e6edf3" font-size="11.5" font-weight="600">CSV / TSV</text>
+    <text x="12" y="42" fill="#8b949e" font-size="9.5">128MB chunks</text>
+    <text x="12" y="52" fill="#8b949e" font-size="9.5">RFC 4180</text>
 
-    <rect x="155" y="0" width="140" height="58" rx="7" fill="rgba(210,153,34,0.08)" stroke="rgba(210,153,34,0.25)" stroke-width="1"/>
-    <text x="169" y="22" fill="#e6edf3" font-size="11.5" font-weight="600">XLSX</text>
-    <text x="169" y="42" fill="#8b949e" font-size="9.5">ExcelJS streaming</text>
+    <rect x="110" y="0" width="100" height="58" rx="7" fill="rgba(210,153,34,0.08)" stroke="rgba(210,153,34,0.25)" stroke-width="1"/>
+    <text x="122" y="22" fill="#e6edf3" font-size="11.5" font-weight="600">XLSX</text>
+    <text x="122" y="42" fill="#8b949e" font-size="9.5">ExcelJS</text>
+    <text x="122" y="52" fill="#8b949e" font-size="9.5">streaming</text>
 
-    <rect x="310" y="0" width="140" height="58" rx="7" fill="rgba(210,153,34,0.08)" stroke="rgba(210,153,34,0.25)" stroke-width="1"/>
-    <text x="324" y="22" fill="#e6edf3" font-size="11.5" font-weight="600">XLS</text>
-    <text x="324" y="42" fill="#8b949e" font-size="9.5">SheetJS legacy</text>
+    <rect x="220" y="0" width="100" height="58" rx="7" fill="rgba(210,153,34,0.08)" stroke="rgba(210,153,34,0.25)" stroke-width="1"/>
+    <text x="232" y="22" fill="#e6edf3" font-size="11.5" font-weight="600">XLS</text>
+    <text x="232" y="42" fill="#8b949e" font-size="9.5">SheetJS</text>
+    <text x="232" y="52" fill="#8b949e" font-size="9.5">legacy</text>
 
-    <rect x="465" y="0" width="140" height="58" rx="7" fill="rgba(210,153,34,0.08)" stroke="rgba(210,153,34,0.25)" stroke-width="1"/>
-    <text x="479" y="22" fill="#e6edf3" font-size="11.5" font-weight="600">EVTX</text>
-    <text x="479" y="42" fill="#8b949e" font-size="9.5">@ts-evtx binary</text>
+    <rect x="330" y="0" width="100" height="58" rx="7" fill="rgba(210,153,34,0.08)" stroke="rgba(210,153,34,0.25)" stroke-width="1"/>
+    <text x="342" y="22" fill="#e6edf3" font-size="11.5" font-weight="600">EVTX</text>
+    <text x="342" y="42" fill="#8b949e" font-size="9.5">@ts-evtx</text>
+    <text x="342" y="52" fill="#8b949e" font-size="9.5">binary</text>
 
-    <rect x="620" y="0" width="140" height="58" rx="7" fill="rgba(210,153,34,0.08)" stroke="rgba(210,153,34,0.25)" stroke-width="1"/>
-    <text x="634" y="22" fill="#e6edf3" font-size="11.5" font-weight="600">Plaso</text>
-    <text x="634" y="42" fill="#8b949e" font-size="9.5">SQLite direct query</text>
+    <rect x="440" y="0" width="100" height="58" rx="7" fill="rgba(210,153,34,0.08)" stroke="rgba(210,153,34,0.25)" stroke-width="1"/>
+    <text x="452" y="22" fill="#e6edf3" font-size="11.5" font-weight="600">Plaso</text>
+    <text x="452" y="42" fill="#8b949e" font-size="9.5">SQLite direct</text>
+    <text x="452" y="52" fill="#8b949e" font-size="9.5">query</text>
+
+    <rect x="550" y="0" width="100" height="58" rx="7" fill="rgba(210,153,34,0.08)" stroke="rgba(210,153,34,0.3)" stroke-width="1.5"/>
+    <text x="562" y="22" fill="#e6edf3" font-size="11.5" font-weight="600">$MFT</text>
+    <text x="562" y="42" fill="#8b949e" font-size="9.5">2-pass binary</text>
+    <text x="562" y="52" fill="#8b949e" font-size="9.5">22 columns</text>
+
+    <rect x="660" y="0" width="100" height="58" rx="7" fill="rgba(210,153,34,0.08)" stroke="rgba(210,153,34,0.3)" stroke-width="1.5"/>
+    <text x="672" y="22" fill="#e6edf3" font-size="11.5" font-weight="600">$J (USN)</text>
+    <text x="672" y="42" fill="#8b949e" font-size="9.5">USN Journal</text>
+    <text x="672" y="52" fill="#8b949e" font-size="9.5">binary parser</text>
   </g>
 </svg>
