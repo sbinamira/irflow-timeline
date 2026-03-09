@@ -176,21 +176,28 @@ jobs:
             destination="s3://${IRFLOW_UPDATE_BUCKET}"
           fi
 
-          endpoint_args=()
-          if [ -n "${AWS_ENDPOINT_URL_S3:-}" ]; then
-            endpoint_args+=(--endpoint-url "${AWS_ENDPOINT_URL_S3}")
-          fi
-
           dmg_name="$(basename "${{ steps.artifacts.outputs.dmg }}")"
           zip_name="$(basename "${{ steps.artifacts.outputs.zip }}")"
           yml_name="$(basename "${{ steps.artifacts.outputs.yml }}")"
 
-          aws s3 cp "${{ steps.artifacts.outputs.dmg }}" "${destination}/${dmg_name}" "${endpoint_args[@]}" \
+          aws_s3_cp() {
+            local source_path="$1"
+            local destination_path="$2"
+            shift 2
+
+            if [ -n "${AWS_ENDPOINT_URL_S3:-}" ]; then
+              aws s3 cp "${source_path}" "${destination_path}" --endpoint-url "${AWS_ENDPOINT_URL_S3}" "$@"
+            else
+              aws s3 cp "${source_path}" "${destination_path}" "$@"
+            fi
+          }
+
+          aws_s3_cp "${{ steps.artifacts.outputs.dmg }}" "${destination}/${dmg_name}" \
             --cache-control "public, max-age=3600, immutable"
 
-          aws s3 cp "${{ steps.artifacts.outputs.zip }}" "${destination}/${zip_name}" "${endpoint_args[@]}" \
+          aws_s3_cp "${{ steps.artifacts.outputs.zip }}" "${destination}/${zip_name}" \
             --cache-control "public, max-age=3600, immutable"
 
-          aws s3 cp "${{ steps.artifacts.outputs.yml }}" "${destination}/${yml_name}" "${endpoint_args[@]}" \
+          aws_s3_cp "${{ steps.artifacts.outputs.yml }}" "${destination}/${yml_name}" \
             --cache-control "no-cache, no-store, must-revalidate" \
             --content-type "text/yaml"
