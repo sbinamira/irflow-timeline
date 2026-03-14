@@ -1025,6 +1025,7 @@ export default function App() {
   const [filterDropdown, setFilterDropdown] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
   const [rowContextMenu, setRowContextMenu] = useState(null);
+  const [cellContextMenu, setCellContextMenu] = useState(null);
   const [groupDragOver, setGroupDragOver] = useState(false);
   const [groupReorderDrag, setGroupReorderDrag] = useState(null); // col name being dragged within group bar
   const [dateTimeFormat, setDateTimeFormat] = useState("yyyy-MM-dd HH:mm:ss");
@@ -2714,6 +2715,9 @@ export default function App() {
       if (mod && e.key === "b") { e.preventDefault(); if (ct) up("showBookmarkedOnly", !ct.showBookmarkedOnly); }
       if (mod && e.key === "r") { e.preventDefault(); resetColumnWidths(); }
       if (mod && e.key === "c" && selectedRows.size > 0 && ct) {
+        // If user has text selected in the DOM (e.g., detail panel cell), let native copy handle it
+        const sel = window.getSelection();
+        if (sel && sel.toString().trim().length > 0) return;
         e.preventDefault();
         const hdrs = ct.headers.filter((h) => !ct.hiddenColumns?.has(h));
         const sortedIndices = [...selectedRows].sort((a, b) => a - b);
@@ -2733,6 +2737,7 @@ export default function App() {
         if (filterDropdown) { setFilterDropdown(null); return; }
         if (dateRangeDropdown) { setDateRangeDropdown(null); return; }
         if (contextMenu) { setContextMenu(null); return; }
+        if (cellContextMenu) { setCellContextMenu(null); return; }
         if (rowContextMenu) { setRowContextMenu(null); return; }
         if (detailPanelOpen && selectedRows.size > 0) { setDetailPanelOpen(false); return; }
         if (selectedRows.size > 0) { setSelectedRows(new Set()); setLastClickedRow(null); return; }
@@ -4332,6 +4337,7 @@ export default function App() {
                       {/* Pinned data cells */}
                       {pinnedH.map((h) => (
                         <div key={h} data-cell-col={h} onDoubleClick={() => setCellPopup({ column: h, value: row[h] || "" })} title={fmtCell(h, row[h])}
+                          onClick={(e) => { if (e.metaKey || e.ctrlKey) { e.stopPropagation(); setCellContextMenu({ x: e.clientX, y: e.clientY, colName: h, cellValue: row[h] || "" }); } }}
                           onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setRowContextMenu({ x: e.clientX, y: e.clientY, rowId: row.__idx, rowIndex: ai, currentTags: rTags, row, cellColumn: h, cellValue: row[h] || "" }); }}
                           style={{ width: gw(h), minWidth: gw(h), boxSizing: "border-box", padding: "0 8px", display: "flex", alignItems: "center", overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis", borderRight: h === pinnedH[pinnedH.length - 1] ? `2px solid ${th.borderAccent}44` : `1px solid ${th.cellBorder}`, fontSize: fontSize - 0.5, position: "sticky", left: pinnedOffsets.offsets[h], zIndex: 2, background: stickyBase, boxShadow: stickyOverlay }}>
                           {renderCell(h, row[h])}
@@ -4340,6 +4346,7 @@ export default function App() {
                       {/* Scrollable data cells */}
                       {scrollH.map((h) => (
                         <div key={h} data-cell-col={h} onDoubleClick={() => setCellPopup({ column: h, value: row[h] || "" })} title={fmtCell(h, row[h])}
+                          onClick={(e) => { if (e.metaKey || e.ctrlKey) { e.stopPropagation(); setCellContextMenu({ x: e.clientX, y: e.clientY, colName: h, cellValue: row[h] || "" }); } }}
                           onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setRowContextMenu({ x: e.clientX, y: e.clientY, rowId: row.__idx, rowIndex: ai, currentTags: rTags, row, cellColumn: h, cellValue: row[h] || "" }); }}
                           style={{ width: gw(h), minWidth: gw(h), boxSizing: "border-box", padding: "0 8px", display: "flex", alignItems: "center", overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis", borderRight: `1px solid ${th.cellBorder}`, fontSize: fontSize - 0.5 }}>
                           {renderCell(h, row[h])}
@@ -5063,6 +5070,7 @@ export default function App() {
 
                   <S>Column Filters</S>
                   <P>Each column has a text filter input and a dropdown (▼) for value-based checkbox filtering. Filters can be combined across columns. Use the toggle button to temporarily disable individual filters without clearing them.</P>
+                  <Li><b>Filter in / Filter out</b> — Right-click any cell or <K>⌘</K>+Click to quickly filter. "Filter in" shows only rows matching that value; "Filter out" excludes rows with that value.</Li>
                   <Li><b>Date range filter</b> — Click the ⏱ icon on timestamp columns to filter by date range.</Li>
                   <Li><b>Advanced filter</b> — Use "Edit Filter" in the status bar for complex AND/OR filter logic.</Li>
 
@@ -5070,7 +5078,7 @@ export default function App() {
                   <P>Right-click any column header and select "Group by this column" to group rows. Multiple columns can be grouped hierarchically. Click the expand arrow (▶) to reveal rows within a group. Use the checkbox on group headers to select all rows in that group for copying.</P>
 
                   <S>Tagging & Bookmarks</S>
-                  <Li><b>Tags</b> — Right-click any row to add colored tags. Tags are searchable, filterable, and visible in the Tags column. Each tag gets a unique color from the preset palette.</Li>
+                  <Li><b>Tags</b> — Right-click any row to add colored tags via the Tags submenu. Select multiple rows (checkboxes) first to apply a tag to all selected rows at once. Tags are searchable, filterable, and visible in the Tags column.</Li>
                   <Li><b>Bookmarks</b> — Click the bookmark icon (flag) on any row. Use <K>⌘B</K> to toggle "Flagged Only" view.</Li>
                   <Li><b>Bulk tagging</b> — Use Bulk Actions to tag all filtered/visible rows at once, or tag by time ranges from the histogram.</Li>
                   <Li><b>IOC tagging</b> — Load IOC files (CSV, XLSX, TSV) and auto-tag matching rows with per-IOC tags.</Li>
@@ -5096,7 +5104,8 @@ export default function App() {
 
                   <S>Tips</S>
                   <Li>Drag column headers to reorder. Double-click a header divider to auto-fit column width.</Li>
-                  <Li>Right-click column headers for options: pin, hide, group, sort, stacking, stats.</Li>
+                  <Li>Right-click column headers for options: pin, hide, group, sort, stacking, stats. Right-click cells for copy, filter in/out, tags, and VT lookup.</Li>
+                  <Li><K>⌘</K>+Click any cell to quickly access Filter in, Filter out, and Hide column.</Li>
                   <Li><K>⌘C</K> copies selected rows as tab-separated text (with headers). Works in both normal and grouped mode.</Li>
                   <Li>Double-click any cell to see its full content in a popup.</Li>
                   <Li>Drop files directly onto the window to import them.</Li>
@@ -19559,12 +19568,12 @@ strong{color:${c.text}}
       {rowContextMenu && (
         <>
           <div onMouseDown={(e) => { if (e.button === 0) setRowContextMenu(null); }} onContextMenu={(e) => { e.preventDefault(); }} style={{ position: "fixed", inset: 0, zIndex: 299 }} />
-          <div style={{ position: "fixed", left: Math.min(rowContextMenu.x, window.innerWidth - 220), top: Math.min(rowContextMenu.y, window.innerHeight - 400), background: th.modalBg, border: `1px solid ${th.modalBorder}`, borderRadius: 6, padding: "4px 0", zIndex: 300, boxShadow: "0 8px 24px rgba(0,0,0,0.4)", minWidth: 200 }}>
+          <div style={{ position: "fixed", left: Math.min(rowContextMenu.x, window.innerWidth - 220), top: Math.min(rowContextMenu.y, window.innerHeight - 300), background: themeName === "dark" ? "rgba(30,33,38,0.82)" : "rgba(255,255,255,0.88)", backdropFilter: "blur(20px) saturate(180%)", WebkitBackdropFilter: "blur(20px) saturate(180%)", border: `1px solid ${themeName === "dark" ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.12)"}`, borderRadius: 10, padding: "5px 0", zIndex: 300, boxShadow: themeName === "dark" ? "0 12px 40px rgba(0,0,0,0.55), 0 0 0 0.5px rgba(255,255,255,0.06) inset" : "0 12px 40px rgba(0,0,0,0.18), 0 0 0 0.5px rgba(255,255,255,0.5) inset", minWidth: 200 }}>
             {rowContextMenu.cellColumn && (
               <button onClick={() => { copyCell(rowContextMenu.cellValue); setRowContextMenu(null); }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = th.btnBg; }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = `${th.accent}22`; }}
                 onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-                style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "6px 12px", background: "none", border: "none", color: th.text, fontSize: 12, cursor: "pointer", textAlign: "left", fontFamily: "-apple-system, sans-serif" }}>
+                style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "6px 14px", background: "none", border: "none", color: th.text, fontSize: 12, cursor: "pointer", textAlign: "left", fontFamily: "-apple-system, BlinkMacSystemFont, sans-serif", borderRadius: 5, margin: "0 4px", maxWidth: "calc(100% - 8px)" }}>
                 <span style={{ width: 16, textAlign: "center", fontSize: 11 }}>📋</span>
                 Copy Cell <span style={{ color: th.textMuted, fontSize: 10, marginLeft: "auto", maxWidth: 80, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{rowContextMenu.cellColumn}</span>
               </button>
@@ -19578,42 +19587,116 @@ strong{color:${c.text}}
               }
               setRowContextMenu(null);
             }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = th.btnBg; }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = `${th.accent}22`; }}
               onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-              style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "6px 12px", background: "none", border: "none", color: th.text, fontSize: 12, cursor: "pointer", textAlign: "left", fontFamily: "-apple-system, sans-serif" }}>
+              style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "6px 14px", background: "none", border: "none", color: th.text, fontSize: 12, cursor: "pointer", textAlign: "left", fontFamily: "-apple-system, BlinkMacSystemFont, sans-serif", borderRadius: 5, margin: "0 4px", maxWidth: "calc(100% - 8px)" }}>
               <span style={{ width: 16, textAlign: "center", fontSize: 11 }}>📄</span>
               Copy Row
             </button>
-            <div style={{ height: 1, background: th.border, margin: "4px 0" }} />
-            <div style={{ padding: "4px 12px", color: th.textMuted, fontSize: 10, fontFamily: "-apple-system, sans-serif", textTransform: "uppercase", letterSpacing: "0.06em" }}>Tags</div>
-            {Object.entries(ct?.tagColors || {}).map(([tag, color]) => {
-              const hasTg = rowContextMenu.currentTags.includes(tag);
-              return (
-                <button key={tag} onClick={async () => {
-                  if (hasTg) await tle.removeTag(ct.id, rowContextMenu.rowId, tag);
-                  else await tle.addTag(ct.id, rowContextMenu.rowId, tag);
-                  const newTags = { ...ct.rowTags };
-                  const list = [...(newTags[rowContextMenu.rowId] || [])];
-                  if (hasTg) newTags[rowContextMenu.rowId] = list.filter((t) => t !== tag);
-                  else { list.push(tag); newTags[rowContextMenu.rowId] = list; }
-                  up("rowTags", newTags);
+            {/* Filter in / Filter out */}
+            {rowContextMenu.cellColumn && (
+              <>
+                <div style={{ height: 1, background: themeName === "dark" ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)", margin: "4px 8px" }} />
+                <div style={{ padding: "4px 14px 2px", color: th.textMuted, fontSize: 10, fontFamily: "-apple-system, BlinkMacSystemFont, sans-serif", textTransform: "uppercase", letterSpacing: "0.06em" }}>Filters</div>
+                <button onClick={() => {
+                  setTabs((prev) => prev.map((t) => {
+                    if (t.id !== activeTab) return t;
+                    const newCbf = { ...t.checkboxFilters };
+                    newCbf[rowContextMenu.cellColumn] = [rowContextMenu.cellValue];
+                    return { ...t, checkboxFilters: newCbf };
+                  }));
                   setRowContextMenu(null);
                 }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = th.btnBg; }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = `${th.accent}22`; }}
                   onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-                  style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "5px 12px", background: "none", border: "none", color: th.text, fontSize: 12, cursor: "pointer", textAlign: "left", fontFamily: "-apple-system, sans-serif" }}>
-                  <span style={{ color, fontSize: 14 }}>{hasTg ? "●" : "○"}</span>
-                  <span>{tag}</span>
+                  style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "6px 14px", background: "none", border: "none", color: th.text, fontSize: 12, cursor: "pointer", textAlign: "left", fontFamily: "-apple-system, BlinkMacSystemFont, sans-serif", borderRadius: 5, margin: "0 4px", maxWidth: "calc(100% - 8px)" }}>
+                  <span style={{ width: 16, height: 16, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={th.accent} strokeWidth="2" strokeLinecap="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg></span>
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Filter in {rowContextMenu.cellValue ? String(rowContextMenu.cellValue).slice(0, 40) : "(empty)"}</span>
                 </button>
+                <button onClick={() => {
+                  setTabs((prev) => prev.map((t) => {
+                    if (t.id !== activeTab) return t;
+                    const af = [...(t.advancedFilters || [])];
+                    af.push({ column: rowContextMenu.cellColumn, operator: "not_equals", value: rowContextMenu.cellValue, logic: "AND" });
+                    return { ...t, advancedFilters: af };
+                  }));
+                  setRowContextMenu(null);
+                }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = `${th.accent}22`; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                  style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "6px 14px", background: "none", border: "none", color: th.text, fontSize: 12, cursor: "pointer", textAlign: "left", fontFamily: "-apple-system, BlinkMacSystemFont, sans-serif", borderRadius: 5, margin: "0 4px", maxWidth: "calc(100% - 8px)" }}>
+                  <span style={{ width: 16, height: 16, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={th.danger || "#f85149"} strokeWidth="2" strokeLinecap="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/><line x1="4" y1="21" x2="20" y2="5"/></svg></span>
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Filter out {rowContextMenu.cellValue ? String(rowContextMenu.cellValue).slice(0, 40) : "(empty)"}</span>
+                </button>
+              </>
+            )}
+            <div style={{ height: 1, background: themeName === "dark" ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)", margin: "4px 8px" }} />
+            {/* Tags — collapsible submenu */}
+            {(() => {
+              const tagEntries = Object.entries(ct?.tagColors || {});
+              return (
+                <div style={{ position: "relative" }}
+                  onMouseEnter={(e) => { const sub = e.currentTarget.querySelector("[data-tag-sub]"); if (sub) sub.style.display = "block"; }}
+                  onMouseLeave={(e) => { const sub = e.currentTarget.querySelector("[data-tag-sub]"); if (sub) sub.style.display = "none"; }}>
+                  <button
+                    onMouseEnter={(e) => { e.currentTarget.style.background = `${th.accent}22`; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                    style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "6px 14px", background: "none", border: "none", color: th.text, fontSize: 12, cursor: "pointer", textAlign: "left", fontFamily: "-apple-system, BlinkMacSystemFont, sans-serif", borderRadius: 5, margin: "0 4px", maxWidth: "calc(100% - 8px)" }}>
+                    <span style={{ width: 16, textAlign: "center", fontSize: 11 }}>🏷</span>
+                    Tags{selectedRows.size > 1 && selectedRows.has(rowContextMenu.rowIndex) ? ` (${selectedRows.size} rows)` : ""}
+                    <span style={{ marginLeft: "auto", color: th.textMuted, fontSize: 11 }}>▸</span>
+                  </button>
+                  {/* Tags submenu */}
+                  <div data-tag-sub="" style={{ display: "none", position: "absolute", left: "100%", top: -5, background: themeName === "dark" ? "rgba(30,33,38,0.82)" : "rgba(255,255,255,0.88)", backdropFilter: "blur(20px) saturate(180%)", WebkitBackdropFilter: "blur(20px) saturate(180%)", border: `1px solid ${themeName === "dark" ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.12)"}`, borderRadius: 10, padding: "5px 0", boxShadow: themeName === "dark" ? "0 12px 40px rgba(0,0,0,0.55), 0 0 0 0.5px rgba(255,255,255,0.06) inset" : "0 12px 40px rgba(0,0,0,0.18), 0 0 0 0.5px rgba(255,255,255,0.5) inset", minWidth: 160, zIndex: 301 }}>
+                    {tagEntries.map(([tag, color]) => {
+                      const hasTg = rowContextMenu.currentTags.includes(tag);
+                      return (
+                        <button key={tag} onClick={async () => {
+                          // Collect target row IDs — all selected rows if multi-selected, otherwise just the clicked row
+                          const targetIds = [];
+                          if (selectedRows.size > 1 && selectedRows.has(rowContextMenu.rowIndex)) {
+                            for (const ai of selectedRows) {
+                              const item = getRowAt(ai);
+                              const r = isGrouped ? (item?.type === "row" ? item.data : null) : item;
+                              if (r && r.__idx) targetIds.push(r.__idx);
+                            }
+                          } else {
+                            targetIds.push(rowContextMenu.rowId);
+                          }
+                          const newTags = { ...ct.rowTags };
+                          for (const rid of targetIds) {
+                            const rowTags = newTags[rid] || [];
+                            const rowHas = rowTags.includes(tag);
+                            if (rowHas) {
+                              await tle.removeTag(ct.id, rid, tag);
+                              newTags[rid] = rowTags.filter((t) => t !== tag);
+                            } else {
+                              await tle.addTag(ct.id, rid, tag);
+                              newTags[rid] = [...rowTags, tag];
+                            }
+                          }
+                          up("rowTags", newTags);
+                          setRowContextMenu(null);
+                        }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = `${th.accent}22`; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                          style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "5px 14px", background: "none", border: "none", color: th.text, fontSize: 12, cursor: "pointer", textAlign: "left", fontFamily: "-apple-system, BlinkMacSystemFont, sans-serif", borderRadius: 5, margin: "0 4px", maxWidth: "calc(100% - 8px)" }}>
+                          <span style={{ color, fontSize: 14 }}>{hasTg ? "●" : "○"}</span>
+                          <span>{tag}</span>
+                        </button>
+                      );
+                    })}
+                    <div style={{ height: 1, background: themeName === "dark" ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)", margin: "4px 8px" }} />
+                    <button onClick={() => { setRowContextMenu(null); setModal({ type: "tags" }); }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = `${th.accent}22`; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                      style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "5px 14px", background: "none", border: "none", color: th.textDim, fontSize: 11, cursor: "pointer", textAlign: "left", fontFamily: "-apple-system, BlinkMacSystemFont, sans-serif", borderRadius: 5, margin: "0 4px", maxWidth: "calc(100% - 8px)" }}>
+                      Manage Tags...
+                    </button>
+                  </div>
+                </div>
               );
-            })}
-            <div style={{ height: 1, background: th.border, margin: "4px 0" }} />
-            <button onClick={() => { setRowContextMenu(null); setModal({ type: "tags" }); }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = th.btnBg; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-              style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "5px 12px", background: "none", border: "none", color: th.textDim, fontSize: 11, cursor: "pointer", textAlign: "left", fontFamily: "-apple-system, sans-serif" }}>
-              Manage Tags...
-            </button>
+            })()}
             {/* VT Lookup for cell value */}
             {rowContextMenu.cellValue && (() => {
               const val = String(rowContextMenu.cellValue).trim();
@@ -19695,6 +19778,57 @@ strong{color:${c.text}}
                 Find Nearby Events...
               </button>
             </>)}
+          </div>
+        </>
+      )}
+
+      {/* Cell Context Menu (Cmd+Click) — Filter in / Filter out / Hide column */}
+      {cellContextMenu && (
+        <>
+          <div onMouseDown={(e) => { if (e.button === 0) setCellContextMenu(null); }} onContextMenu={(e) => { e.preventDefault(); }} style={{ position: "fixed", inset: 0, zIndex: 299 }} />
+          <div style={{ position: "fixed", left: Math.min(cellContextMenu.x, window.innerWidth - 240), top: Math.min(cellContextMenu.y, window.innerHeight - 160), background: themeName === "dark" ? "rgba(30,33,38,0.82)" : "rgba(255,255,255,0.88)", backdropFilter: "blur(20px) saturate(180%)", WebkitBackdropFilter: "blur(20px) saturate(180%)", border: `1px solid ${themeName === "dark" ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.12)"}`, borderRadius: 10, padding: "5px 0", zIndex: 300, boxShadow: themeName === "dark" ? "0 12px 40px rgba(0,0,0,0.55), 0 0 0 0.5px rgba(255,255,255,0.06) inset" : "0 12px 40px rgba(0,0,0,0.18), 0 0 0 0.5px rgba(255,255,255,0.5) inset", minWidth: 200 }}>
+            <div style={{ padding: "4px 14px 2px", color: th.textMuted, fontSize: 10, fontFamily: "-apple-system, BlinkMacSystemFont, sans-serif", textTransform: "uppercase", letterSpacing: "0.06em" }}>Filters</div>
+            {[
+              { label: `Filter in ${cellContextMenu.cellValue ? String(cellContextMenu.cellValue).slice(0, 40) : "(empty)"}`,
+                icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={th.accent} strokeWidth="2" strokeLinecap="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>,
+                action: () => {
+                  setTabs((prev) => prev.map((t) => {
+                    if (t.id !== activeTab) return t;
+                    const newCbf = { ...t.checkboxFilters };
+                    newCbf[cellContextMenu.colName] = [cellContextMenu.cellValue];
+                    return { ...t, checkboxFilters: newCbf };
+                  }));
+                }},
+              { label: `Filter out ${cellContextMenu.cellValue ? String(cellContextMenu.cellValue).slice(0, 40) : "(empty)"}`,
+                icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={th.danger || "#f85149"} strokeWidth="2" strokeLinecap="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/><line x1="4" y1="21" x2="20" y2="5"/></svg>,
+                action: () => {
+                  setTabs((prev) => prev.map((t) => {
+                    if (t.id !== activeTab) return t;
+                    const af = [...(t.advancedFilters || [])];
+                    af.push({ column: cellContextMenu.colName, operator: "not_equals", value: cellContextMenu.cellValue, logic: "AND" });
+                    return { ...t, advancedFilters: af };
+                  }));
+                }},
+            ].map((item, i) => (
+              <button key={i} onClick={() => { item.action(); setCellContextMenu(null); }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = `${th.accent}22`; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "6px 14px", background: "none", border: "none", color: th.text, fontSize: 12, cursor: "pointer", textAlign: "left", fontFamily: "-apple-system, BlinkMacSystemFont, sans-serif", borderRadius: 5, margin: "0 4px", maxWidth: "calc(100% - 8px)", letterSpacing: "-0.01em" }}>
+                <span style={{ width: 16, height: 16, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{item.icon}</span>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.label}</span>
+              </button>
+            ))}
+            <div style={{ height: 1, background: themeName === "dark" ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)", margin: "4px 8px" }} />
+            <div style={{ padding: "4px 14px 2px", color: th.textMuted, fontSize: 10, fontFamily: "-apple-system, BlinkMacSystemFont, sans-serif", textTransform: "uppercase", letterSpacing: "0.06em" }}>Columns</div>
+            <button onClick={() => { up("hiddenColumns", new Set([...(ct?.hiddenColumns || []), cellContextMenu.colName])); setCellContextMenu(null); }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = `${th.accent}22`; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+              style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "6px 14px", background: "none", border: "none", color: th.text, fontSize: 12, cursor: "pointer", textAlign: "left", fontFamily: "-apple-system, BlinkMacSystemFont, sans-serif", borderRadius: 5, margin: "0 4px", maxWidth: "calc(100% - 8px)", letterSpacing: "-0.01em" }}>
+              <span style={{ width: 16, height: 16, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={th.textDim} strokeWidth="2" strokeLinecap="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+              </span>
+              Hide column
+            </button>
           </div>
         </>
       )}

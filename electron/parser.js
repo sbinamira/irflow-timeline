@@ -2552,10 +2552,12 @@ async function parseFile(filePath, tabId, db, onProgress, sheetName, fileSize) {
   if (ext === ".evtx") {
     return parseEvtxFile(filePath, tabId, db, onProgress);
   }
-  if (ext === ".plaso") {
+  if (ext === ".plaso" || ext === ".timeline") {
     const check = validatePlasoFile(filePath);
-    if (!check.valid) throw new Error("Not a valid Plaso database (missing metadata table or format_version)");
-    return parsePlasoFile(filePath, tabId, db, onProgress);
+    if (ext === ".plaso" && !check.valid) throw new Error("Not a valid Plaso database (missing metadata table or format_version)");
+    // .timeline files: if valid Plaso SQLite, parse as Plaso; otherwise fall through to CSV
+    if (check.valid) return parsePlasoFile(filePath, tabId, db, onProgress);
+    if (ext === ".timeline") { /* not Plaso — fall through to CSV below */ }
   }
   if (ext === ".mft") {
     return parseMftFile(filePath, tabId, db, onProgress);

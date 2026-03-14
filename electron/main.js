@@ -17,6 +17,10 @@ const { parseFile, getXLSXSheets, extractResidentData } = require("./parser");
 const { createUpdateController } = require("./updater");
 
 // Raise V8 heap limit to 16GB — needed for importing large forensic images (20GB+)
+// app.commandLine.appendSwitch only affects renderer processes; for the main process
+// (where parsing runs), we must set the flag via v8 directly.
+const v8 = require("v8");
+v8.setFlagsFromString("--max-old-space-size=16384");
 app.commandLine.appendSwitch("js-flags", "--max-old-space-size=16384");
 
 let mainWindow;
@@ -529,7 +533,7 @@ safeHandle("open-file-dialog", async () => {
       { name: "CSV Files", extensions: ["csv", "tsv", "txt", "log"] },
       { name: "Excel Files", extensions: ["xlsx", "xls", "xlsm"] },
       { name: "EVTX Files", extensions: ["evtx"] },
-      { name: "Plaso Files", extensions: ["plaso"] },
+      { name: "Plaso / Timeline Files", extensions: ["plaso", "timeline"] },
       { name: "NTFS Artifacts ($MFT, $J)", extensions: ["mft", "bin"] },
     ],
   });
