@@ -76,6 +76,15 @@ Click the filter icon on any column header to open column-specific filtering:
 - **Text filter** — type to match values within that column
 - Filters are additive — multiple column filters create an AND condition
 
+### Filter In / Filter Out
+
+Quickly filter by a specific cell value without opening the filter editor:
+
+- **Right-click any cell** — select **Filter in** to show only rows matching that value, or **Filter out** to exclude rows with that value
+- **`Cmd+Click` any cell** — opens a compact context menu with **Filter in**, **Filter out**, and **Hide column** actions
+
+**Filter in** sets a checkbox filter on the column to show only the clicked value. **Filter out** adds an advanced filter condition (`not_equals`) to exclude the value. Both methods work alongside existing filters.
+
 ### Checkbox Filters
 
 For columns with a manageable number of unique values:

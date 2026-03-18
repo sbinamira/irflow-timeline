@@ -4,7 +4,37 @@ description: IRFlow Timeline changelog — version history, new features, perfor
 
 # Changelog
 
-## v1.0.4-beta — March 10, 2026
+## v1.0.5 — March 17, 2026
+
+### New Features
+
+- **Cell context menu (Cmd+Click)** — `Cmd+Click` any cell to instantly access **Filter in**, **Filter out**, and **Hide column** actions. A fast way to drill into specific values without opening the filter editor
+- **Right-click Filter in / Filter out** — Right-click any cell to see **Filter in** (show only rows matching that value) and **Filter out** (exclude rows with that value) under a new Filters section in the context menu
+- **Multi-row tagging** — Select multiple rows with checkboxes, then right-click to apply a tag to all selected rows at once. The context menu shows the count, e.g., "Tags (4 rows)"
+- **Tags hover submenu** — Tags in the right-click context menu are now collapsed into a compact **Tags ▸** submenu with a Manage Tags option, keeping the menu clean
+
+### Bug Fixes
+
+- **Plaso import crash fix** — `LIMIT` clause in `UNION ALL` query for Plaso field discovery must be inside a subquery. Wraps the first `SELECT` in `(SELECT ... LIMIT 300)` to fix a SQLite syntax error on all Plaso files
+- **`.timeline` file support** — Files with `.timeline` extension are now auto-detected as Plaso databases. If not a valid Plaso file, they fall through to CSV parsing
+- **Cmd+C detail panel fix** — `Cmd+C` now correctly copies selected text in the detail panel instead of intercepting native copy when a DOM selection exists
+- **Context menu opacity fix** — Context menu background opacity raised to 0.97 so grid rows no longer bleed through semi-transparent menus
+- **formatNumber null safety** — `formatNumber()` handles null/undefined values gracefully instead of crashing
+
+### Performance
+
+- **V8 heap limit for main process** — Sets `--max-old-space-size=16384` via `v8.setFlagsFromString()` for the main process (not just the renderer), enabling import of 20GB+ forensic images without hitting heap limits
+
+### CI / Release
+
+- **Universal binary build** — CI now builds x64 and arm64 slices separately then `lipo`-merges into a universal fat binary, fixing architecture mismatches on Intel Macs
+- **macOS runner update** — Switched to `macos-14` runner for reliable universal native module cross-compilation
+- **Clean release artifacts** — `release/` directory is cleaned before each build to prevent stale artifact pickup
+- **Exact version matching** — Artifact collection matches the exact version from `package.json` instead of first-found glob
+
+---
+
+## v1.0.4 — March 10, 2026
 
 ### Performance
 

@@ -98,9 +98,9 @@ EVTX parsing works with all Windows event logs including:
 
 ## Plaso (Forensic Timeline Database)
 
-**Extensions:** `.plaso`
+**Extensions:** `.plaso`, `.timeline`
 
-Plaso is the forensic timeline format created by the `log2timeline` / `plaso` framework. IRFlow Timeline reads Plaso SQLite databases natively.
+Plaso is the forensic timeline format created by the `log2timeline` / `plaso` framework. IRFlow Timeline reads Plaso SQLite databases natively. Files with the `.timeline` extension are auto-detected — if they are valid Plaso databases, they are parsed as Plaso; otherwise they fall through to CSV parsing.
 
 ### Features
 
@@ -197,7 +197,7 @@ IRFlow Timeline determines the file format by extension and content detection:
 .xlsx, .xlsm                →  Excel Streaming Parser (ExcelJS)
 .xls                        →  Legacy Excel Parser (SheetJS)
 .evtx                       →  EVTX Binary Parser
-.plaso                      →  Plaso SQLite Reader
+.plaso, .timeline            →  Plaso SQLite Reader (auto-detect; .timeline falls back to CSV)
 .mft / $MFT (FILE0 magic)  →  Raw MFT Binary Parser
 $J / $UsnJrnl (by name)    →  Raw USN Journal Parser
 ```

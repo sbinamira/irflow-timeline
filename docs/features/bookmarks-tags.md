@@ -39,10 +39,14 @@ Tags are free-form labels you attach to rows for categorization. Each row can ha
 
 ### Adding Tags
 
-1. `Cmd+Click` a row
-2. Select **Add Tag**
-3. Type a tag name or choose from presets
+1. Right-click a row to open the context menu
+2. Hover over **Tags ▸** to expand the tag submenu
+3. Click a tag to toggle it on or off
 4. The tag appears as a colored chip in the Tags column
+
+### Multi-Row Tagging
+
+Select multiple rows using checkboxes, then right-click to apply a tag to all selected rows at once. The context menu shows the count (e.g., "Tags (4 rows)") to confirm how many rows will be affected.
 
 ### Tag Presets
 

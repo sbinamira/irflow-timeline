@@ -46,7 +46,8 @@ description: Keyboard shortcuts reference for IRFlow Timeline — file operation
 | `Cmd+Plus` / `Cmd+Minus` | Increase / decrease font size |
 | `Click` | Select row |
 | `Shift+Click` | Range select rows |
-| `Cmd+Click` / `Ctrl+Click` | Context menu |
+| `Cmd+Click` / `Ctrl+Click` cell | Cell quick actions (Filter in / Filter out / Hide column) |
+| `Right-click` cell | Full context menu (Copy, Filter, Tags, VT lookup) |
 | `Shift+F10` | Context menu (keyboard) |
 | `Double-click` | Cell detail popup |
 | `Double-click border` | Auto-fit column width |
@@ -89,13 +90,26 @@ description: Keyboard shortcuts reference for IRFlow Timeline — file operation
 
 ## Context Menu Shortcuts
 
-`Cmd+Click` any cell or column header to access additional actions:
+**`Cmd+Click` any cell** opens a quick-action menu:
+
+- Filter in (show only matching rows)
+- Filter out (exclude matching rows)
+- Hide column
+
+**Right-click any cell** opens the full context menu:
 
 - Copy cell / Copy row
-- Bookmark / Tag
-- Pin column
+- Filter in / Filter out
+- Tags ▸ (hover submenu — supports multi-row tagging)
+- VirusTotal lookup (for IPs, hashes, domains)
+
+**Right-click any column header** for column actions:
+
+- Pin / Unpin column
 - Group by column
-- Filter / Exclude value
+- Sort ascending / descending
+- Stack values
+- Column stats
 - Auto-fit column width
 - Create color rule
-- Lookup on VirusTotal
+- Hide column
