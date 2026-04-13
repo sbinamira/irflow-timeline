@@ -2119,10 +2119,16 @@ export default function App() {
   // Fallback: catch right-clicks via DOM mousedown (covers Cmd+Click / Ctrl+Click on macOS and button=2)
   useEffect(() => {
     const handler = (e) => {
-      if (e.button === 2 || (e.button === 0 && (e.ctrlKey || e.metaKey))) {
-        e.preventDefault();
+      if (e.button === 2) {
+        // Do NOT call preventDefault here — doing so on mousedown suppresses the
+        // subsequent contextmenu DOM event on macOS/Chromium, which prevents React's
+        // onContextMenu handlers from firing. The OS context menu is already
+        // suppressed by electron/main.js via webContents.on("context-menu").
         rightClickFired.current = true;
         setTimeout(() => { rightClickFired.current = false; }, 50);
+        handleNativeRightClick(e.clientX, e.clientY);
+      } else if (e.button === 0 && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
         handleNativeRightClick(e.clientX, e.clientY);
       }
     };
@@ -4367,7 +4373,7 @@ export default function App() {
 
                   return (
                     <div key={row.__idx} data-row-id={row.__idx} data-row-index={ai} onClick={(e) => handleRowClick(ai, e)}
-                      onContextMenu={(e) => { e.preventDefault(); setRowContextMenu({ x: e.clientX, y: e.clientY, rowId: row.__idx, rowIndex: ai, currentTags: rTags, row }); }}
+                      onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setRowContextMenu({ x: e.clientX, y: e.clientY, rowId: row.__idx, rowIndex: ai, currentTags: rTags, row }); }}
                       style={{ display: "flex", height: ROW_HEIGHT, position: "absolute", top: ai * ROW_HEIGHT, width: tw,
                         background: rowBg, color: cm ? cm.fg : th.text, borderBottom: `1px solid ${th.cellBorder}`,
                         boxShadow: sel ? `inset 2px 0 0 0 ${th.borderAccent}` : "none", cursor: "default",
