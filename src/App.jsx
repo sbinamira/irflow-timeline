@@ -17,6 +17,72 @@ const BKMK_COL_WIDTH = 34;
 const CHECKBOX_COL_WIDTH = 24;
 const VT_COL_WIDTH = 80;
 const VT_COMPATIBLE_RE = /^(SHA256|SHA1|MD5)_Hash$|^Domain_Name$|^IPv[46]_Address(:Port)?$|^URL$/;
+const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+const MONTH_SHORT = { jan:0, feb:1, mar:2, apr:3, may:4, jun:5, jul:6, aug:7, sep:8, oct:9, nov:10, dec:11 };
+
+// Parse a raw timestamp string into { year, month (0-based), day } for the date-tree filter.
+// Handles ~50 common log/forensic timestamp formats. Returns null if no date can be extracted.
+const parseTimestampForTree = (rawStr) => {
+  if (!rawStr) return null;
+  // Strip literal quote chars present in some formats (e.g. yyyy-MM-dd'T'HH:mm:ss, 'Z')
+  const s = (rawStr + "").trim().replace(/'/g, "");
+  let m, mo, yr;
+
+  const ok = (y, mi, d) => (mi >= 0 && mi <= 11 && d >= 1 && d <= 31) ? { year: y, month: mi, day: d } : null;
+
+  // 1. yyyy-MM-dd  or  yyyy/MM/dd  (ISO and variants, any separator follows)
+  m = s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
+  if (m) return ok(+m[1], +m[2] - 1, +m[3]);
+
+  // 2. yyyyMMdd compact (8 digits then space/end, e.g. "20230423 11:42:35.173")
+  m = s.match(/^(\d{4})(\d{2})(\d{2})(?=\s|$)/);
+  if (m) return ok(+m[1], +m[2] - 1, +m[3]);
+
+  // 3. yyyy MMM dd  (e.g. "2024 Mar 03 05:12:41")
+  m = s.match(/^(\d{4})\s+([A-Za-z]{3})\s+(\d{1,2})/);
+  if (m) { mo = MONTH_SHORT[m[2].toLowerCase()]; if (mo !== undefined) return ok(+m[1], mo, +m[3]); }
+
+  // 4. dd/MMM/yyyy  or  dd-MMM-yyyy  (e.g. "19/Apr/2023:06:36:15" or "23-Apr-2023 11:42:35")
+  m = s.match(/^(\d{1,2})[\/\-]([A-Za-z]{3})[\/\-](\d{4})/);
+  if (m) { mo = MONTH_SHORT[m[2].toLowerCase()]; if (mo !== undefined) return ok(+m[3], mo, +m[1]); }
+
+  // 5. dd MMM yyyy  (e.g. "23 Apr 2023 11:42:35")
+  m = s.match(/^(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})/);
+  if (m) { mo = MONTH_SHORT[m[2].toLowerCase()]; if (mo !== undefined) return ok(+m[3], mo, +m[1]); }
+
+  // 6. MMM dd, yyyy  or  MMM dd yyyy  (e.g. "Dec 2, 2023 2:39:58 AM" or "Jun 09 2023 15:28:14")
+  m = s.match(/^([A-Za-z]{3})\s+(\d{1,2}),?\s+(\d{4})/);
+  if (m) { mo = MONTH_SHORT[m[1].toLowerCase()]; if (mo !== undefined) return ok(+m[3], mo, +m[2]); }
+
+  // 7. MMM dd HH:mm:ss ... yyyy  (year at end, e.g. "Jan 21 18:20:11 +0000 2024" or "Apr 20 00:00:35 2010")
+  m = s.match(/^([A-Za-z]{3})\s+(\d{1,2})\s+\d{2}:\d{2}:\d{2}.*\b(\d{4})$/);
+  if (m) { mo = MONTH_SHORT[m[1].toLowerCase()]; if (mo !== undefined) return ok(+m[3], mo, +m[2]); }
+
+  // 8. MM/dd/yyyy  (e.g. "11/23/2023*05:13:11" or "9/28/2023 2:23:15 PM")
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m) return ok(+m[3], +m[1] - 1, +m[2]);
+
+  // 9. MM/dd/yy  (e.g. "08/10/23*13:33:56" or "04/23/23 04:34:22")
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2})\b/);
+  if (m) { yr = +m[3]; return ok(yr < 70 ? 2000 + yr : 1900 + yr, +m[1] - 1, +m[2]); }
+
+  // 10. yy-MM-dd  (e.g. "23-04-19 12:00:17") — must come after yyyy-MM-dd (pattern 1 needs 4 digits)
+  m = s.match(/^(\d{2})-(\d{2})-(\d{2})(?=\s|$)/);
+  if (m) { yr = +m[1]; return ok(yr < 70 ? 2000 + yr : 1900 + yr, +m[2] - 1, +m[3]); }
+
+  // 11. yy/MM/dd  (e.g. "06/01/23 04:11:05") — only if it didn't match MM/dd/yy above (ambiguous; same regex)
+  // Note: pattern 9 already handles the slash form for 2-digit years; this is intentionally skipped.
+
+  // 12. yyMMdd compact (6 digits then space, e.g. "220423 11:42:35")
+  m = s.match(/^(\d{2})(\d{2})(\d{2})\s/);
+  if (m) { yr = +m[1]; return ok(yr < 70 ? 2000 + yr : 1900 + yr, +m[2] - 1, +m[3]); }
+
+  // 13. Fallback: native Date (handles remaining ISO variants, timezone offsets, etc.)
+  const nd = new Date(s.replace(/[*_]/g, "T").replace(/,(\d{3})/g, ".$1"));
+  if (!isNaN(nd.getTime())) return { year: nd.getFullYear(), month: nd.getMonth(), day: nd.getDate() };
+
+  return null;
+};
 
 const THEMES = {
   dark: {
@@ -1075,6 +1141,8 @@ export default function App() {
   const [fdSearch, setFdSearch] = useState("");
   const [fdSelected, setFdSelected] = useState(new Set());
   const [fdRegex, setFdRegex] = useState(false);
+  const [fdTab, setFdTab] = useState("values"); // "values" | "dates"
+  const [fdDateExpanded, setFdDateExpanded] = useState({ years: new Set(), months: new Set() });
   const [proximityFilter, setProximityFilter] = useState(null);
   const [searchLoading, setSearchLoading] = useState(false);
   const [regexPaletteOpen, setRegexPaletteOpen] = useState(false);
@@ -1776,7 +1844,7 @@ export default function App() {
         rowTags: {}, tagColors: { ...TAG_PRESETS }, tagFilter: null,
         dateRangeFilters: {}, searchHighlight: false, disabledFilters: new Set(),
         advancedFilters: [],
-        usnResolveStats: null,
+        usnResolveStats: null, detectedTz: null,
         importing: true, dataReady: false,
       }]);
       setActiveTab(tabId);
@@ -1796,12 +1864,34 @@ export default function App() {
         cw[h] = Math.max(80, Math.min(Math.max(hLen, Math.round(meanPx)), 400));
       });
       const saved = pendingRestoresRef.current[tabId];
+      // Detect timezone from sampled timestamp values. Only set if timezone info is present.
+      const detectedTz = (() => {
+        const tsCols = tsColumns || [];
+        if (!tsCols.length || !initialRows?.length) return null;
+        // Matches: named tz (UTC, GMT, PDT…), numeric offset (+0000, -07:00), or trailing Z
+        const TZ_RE = /\b(UTC|GMT|[A-Z]{2,4}T)\b|([+-]\d{1,2}:?\d{2})\b|(Z)(?=[^a-zA-Z]|$)/;
+        const counts = {};
+        outer: for (const row of initialRows) {
+          for (const col of tsCols) {
+            const val = row[col];
+            if (!val) continue;
+            const m = (val + "").replace(/'/g, "").match(TZ_RE);
+            if (m) {
+              const tz = m[1] || m[2] || (m[3] ? "UTC" : null);
+              if (tz) counts[tz] = (counts[tz] || 0) + 1;
+            }
+          }
+          if (Object.values(counts).reduce((a, b) => a + b, 0) >= 50) break outer;
+        }
+        const entries = Object.entries(counts);
+        return entries.length ? entries.sort((a, b) => b[1] - a[1])[0][0] : null;
+      })();
       setTabs((prev) => prev.map((t) => {
         if (t.id !== tabId) return t;
         const base = { ...t, name: fileName, headers, rows: initialRows, rowOffset: 0, totalRows: rowCount, totalFiltered,
           tsColumns: new Set(tsColumns || []), numericColumns: new Set(numericColumns || []),
           columnWidths: saved ? { ...cw, ...saved.columnWidths } : cw, importing: false, dataReady: true, bookmarkedSet: new Set(),
-          sourceFormat: sourceFormat || null,
+          sourceFormat: sourceFormat || null, detectedTz,
           usnResolveStats: sourceFormat === "raw-usnjrnl" ? (resolveStats || null) : null };
         if (!saved) {
           const autoHidden = new Set(emptyColumns || []);
@@ -2613,7 +2703,10 @@ export default function App() {
   }, [tle]);
 
   useEffect(() => {
-    if (!filterDropdown) { setFdValues([]); setFdSearch(""); setFdSelected(new Set()); setFdRegex(false); return; }
+    if (!filterDropdown) { setFdValues([]); setFdSearch(""); setFdSelected(new Set()); setFdRegex(false); setFdTab("values"); setFdDateExpanded({ years: new Set(), months: new Set() }); return; }
+    const _isTsCol = ctRef.current?.tsColumns?.has(filterDropdown.colName);
+    setFdTab(_isTsCol ? "dates" : "values");
+    setFdDateExpanded({ years: new Set(), months: new Set() });
     if (filterDropdown.colName === "__tags__") {
       // Tags filter — load tags from DB
       const existing = ct?.tagFilter;
@@ -3712,6 +3805,7 @@ export default function App() {
             {t.id === activeTab && <span style={{ width: 6, height: 6, borderRadius: 3, background: th.accent, flexShrink: 0 }} />}
             <span style={{ maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis" }}>{t.name}</span>
             <span style={{ color: th.textMuted, fontSize: 10 }}>({formatNumber(t.totalRows || 0)})</span>
+            {t.detectedTz && <span title={`Detected log timezone: ${t.detectedTz}`} style={{ fontSize: 9, padding: "1px 4px", background: th.accentSubtle, color: th.accent, borderRadius: 3, fontFamily: "monospace", flexShrink: 0, letterSpacing: "0.02em" }}>{t.detectedTz}</span>}
             <button onClick={(e) => { e.stopPropagation(); closeTab(t.id); }} style={{ background: "none", border: "none", color: th.textMuted, cursor: "pointer", fontSize: 10, padding: "0 2px", borderRadius: 3 }}>✕</button>
           </div>
         ))}
@@ -6426,34 +6520,167 @@ export default function App() {
               <span style={{ color: th.textDim, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em", fontFamily: "-apple-system, sans-serif", flex: 1 }}>Filter — {filterDropdown.colName === "__tags__" ? "Tags" : filterDropdown.colName === "__vt__" ? "VT Verdict" : filterDropdown.colName}</span>
               <button onClick={() => setFilterDropdown(null)} style={{ background: "none", border: "none", color: th.textMuted, cursor: "pointer", fontSize: 13, padding: "0 2px", lineHeight: 1 }}>✕</button>
             </div>
-            <div style={{ padding: "8px 8px 4px", flexShrink: 0, display: "flex", gap: 4 }}>
-              <input value={fdSearch} onChange={(e) => setFdSearch(e.target.value)} placeholder={fdRegex ? "Regex pattern..." : "Search values..."} autoFocus
-                style={{ flex: 1, background: th.bgInput, border: `1px solid ${fdRegex && fdSearch ? (() => { try { new RegExp(fdSearch); return th.btnBorder; } catch { return th.danger; } })() : th.btnBorder}`, borderRadius: 4, color: th.text, fontSize: 11, padding: "5px 8px", outline: "none", fontFamily: "inherit", boxSizing: "border-box" }} />
-              <button onClick={() => setFdRegex((v) => !v)} title="Toggle regex mode"
-                style={{ padding: "3px 7px", background: fdRegex ? th.accentSubtle : th.btnBg, border: `1px solid ${fdRegex ? th.accent : th.btnBorder}`, borderRadius: 4, color: fdRegex ? th.accent : th.textMuted, fontSize: 11, cursor: "pointer", fontFamily: "monospace", fontWeight: 600, flexShrink: 0 }}>.*</button>
-            </div>
+            {/* Tab bar — only for timestamp columns */}
+            {ct?.tsColumns?.has(filterDropdown.colName) && (
+              <div style={{ display: "flex", borderBottom: `1px solid ${th.border}`, flexShrink: 0 }}>
+                {[["values", "Values"], ["dates", "Date Filters"]].map(([key, label]) => (
+                  <button key={key} onClick={() => setFdTab(key)}
+                    style={{ padding: "5px 12px", background: "none", border: "none", borderBottom: `2px solid ${fdTab === key ? th.accent : "transparent"}`, color: fdTab === key ? th.accent : th.textMuted, fontSize: 11, cursor: "pointer", fontFamily: "-apple-system, sans-serif", marginBottom: -1 }}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {/* Search + regex — Values tab only */}
+            {fdTab === "values" && (
+              <div style={{ padding: "8px 8px 4px", flexShrink: 0, display: "flex", gap: 4 }}>
+                <input value={fdSearch} onChange={(e) => setFdSearch(e.target.value)} placeholder={fdRegex ? "Regex pattern..." : "Search values..."} autoFocus
+                  style={{ flex: 1, background: th.bgInput, border: `1px solid ${fdRegex && fdSearch ? (() => { try { new RegExp(fdSearch); return th.btnBorder; } catch { return th.danger; } })() : th.btnBorder}`, borderRadius: 4, color: th.text, fontSize: 11, padding: "5px 8px", outline: "none", fontFamily: "inherit", boxSizing: "border-box" }} />
+                <button onClick={() => setFdRegex((v) => !v)} title="Toggle regex mode"
+                  style={{ padding: "3px 7px", background: fdRegex ? th.accentSubtle : th.btnBg, border: `1px solid ${fdRegex ? th.accent : th.btnBorder}`, borderRadius: 4, color: fdRegex ? th.accent : th.textMuted, fontSize: 11, cursor: "pointer", fontFamily: "monospace", fontWeight: 600, flexShrink: 0 }}>.*</button>
+              </div>
+            )}
+            {/* Select All / Clear */}
             <div style={{ display: "flex", gap: 4, padding: "2px 8px 4px", flexShrink: 0 }}>
               <button onClick={() => setFdSelected(new Set(fdValues.map((v) => v.val)))} style={ms.bsm}>Select All</button>
               <button onClick={() => setFdSelected(new Set())} style={ms.bsm}>Clear</button>
               <span style={{ flex: 1 }} />
               <span style={{ color: th.textMuted, fontSize: 10, alignSelf: "center" }}>{fdValues.length} values</span>
             </div>
-            <div style={{ flex: 1, overflow: "auto", padding: "0 4px" }}>
-              {fdLoading ? (
-                <div style={{ padding: 16, textAlign: "center", color: th.textMuted, fontSize: 11 }}>Loading...</div>
-              ) : fdValues.length === 0 ? (
-                <div style={{ padding: 16, textAlign: "center", color: th.textMuted, fontSize: 11 }}>No values found</div>
-              ) : (
-                fdValues.map((v) => (
-                  <label key={v.val ?? "__empty"} style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 4px", cursor: "pointer", borderRadius: 3, fontSize: 11, color: th.text }}>
-                    <input type="checkbox" checked={fdSelected.has(v.val)} onChange={() => { const s = new Set(fdSelected); s.has(v.val) ? s.delete(v.val) : s.add(v.val); setFdSelected(s); }}
-                      style={{ accentColor: th.borderAccent, flexShrink: 0 }} />
-                    <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.val || "(empty)"}</span>
-                    <span style={{ color: th.textMuted, fontSize: 10, flexShrink: 0 }}>{formatNumber(v.cnt)}</span>
-                  </label>
-                ))
-              )}
-            </div>
+            {/* Values tab: flat list */}
+            {fdTab === "values" && (
+              <div style={{ flex: 1, overflow: "auto", padding: "0 4px" }}>
+                {fdLoading ? (
+                  <div style={{ padding: 16, textAlign: "center", color: th.textMuted, fontSize: 11 }}>Loading...</div>
+                ) : fdValues.length === 0 ? (
+                  <div style={{ padding: 16, textAlign: "center", color: th.textMuted, fontSize: 11 }}>No values found</div>
+                ) : (
+                  fdValues.map((v) => (
+                    <label key={v.val ?? "__empty"} style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 4px", cursor: "pointer", borderRadius: 3, fontSize: 11, color: th.text }}>
+                      <input type="checkbox" checked={fdSelected.has(v.val)} onChange={() => { const s = new Set(fdSelected); s.has(v.val) ? s.delete(v.val) : s.add(v.val); setFdSelected(s); }}
+                        style={{ accentColor: th.borderAccent, flexShrink: 0 }} />
+                      <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.val || "(empty)"}</span>
+                      <span style={{ color: th.textMuted, fontSize: 10, flexShrink: 0 }}>{formatNumber(v.cnt)}</span>
+                    </label>
+                  ))
+                )}
+              </div>
+            )}
+            {/* Date Filters tab: hierarchical year > month > day tree */}
+            {fdTab === "dates" && (() => {
+              // Build tree: { year: { monthIdx: { day: [val, ...] } } }
+              const tree = {};
+              const empties = [];
+              for (const v of fdValues) {
+                const parsed = parseTimestampForTree(v.val);
+                if (!parsed) { empties.push(v.val); continue; }
+                const { year, month: mi, day: dayNum } = parsed;
+                const y = year.toString();
+                const day = dayNum.toString();
+                if (!tree[y]) tree[y] = {};
+                if (!tree[y][mi]) tree[y][mi] = {};
+                if (!tree[y][mi][day]) tree[y][mi][day] = [];
+                tree[y][mi][day].push(v.val);
+              }
+              const allVals = fdValues.map((v) => v.val);
+              const allSelected = allVals.length > 0 && allVals.every((v) => fdSelected.has(v));
+              const noneSelected = allVals.every((v) => !fdSelected.has(v));
+              const sortedYears = Object.keys(tree).sort();
+              const toggleVals = (vals) => {
+                const s = new Set(fdSelected);
+                const allIn = vals.every((v) => s.has(v));
+                if (allIn) vals.forEach((v) => s.delete(v)); else vals.forEach((v) => s.add(v));
+                setFdSelected(s);
+              };
+              const getYearVals = (y) => Object.values(tree[y]).flatMap((mo) => Object.values(mo).flat());
+              const getMonthVals = (y, mi) => Object.values(tree[y][mi]).flat();
+              const rowSt = { display: "flex", alignItems: "center", gap: 4, padding: "2px 4px", borderRadius: 3, fontSize: 11, color: th.text };
+              const chevSt = { fontSize: 9, color: th.textMuted, width: 14, textAlign: "center", flexShrink: 0, cursor: "pointer", userSelect: "none" };
+              const spSt = { width: 14, flexShrink: 0 };
+              const cbSt = { accentColor: th.borderAccent, flexShrink: 0 };
+              return (
+                <div style={{ flex: 1, overflow: "auto", padding: "0 4px" }}>
+                  {fdLoading ? (
+                    <div style={{ padding: 16, textAlign: "center", color: th.textMuted, fontSize: 11 }}>Loading...</div>
+                  ) : (
+                    <>
+                      {/* (All) */}
+                      <label style={{ ...rowSt, cursor: "pointer" }}>
+                        <span style={spSt} />
+                        <input type="checkbox" style={cbSt}
+                          ref={(el) => { if (el) el.indeterminate = !allSelected && !noneSelected; }}
+                          checked={allSelected}
+                          onChange={() => setFdSelected(allSelected ? new Set() : new Set(allVals))} />
+                        <span style={{ flex: 1 }}>(All)</span>
+                      </label>
+                      {/* (Empty) */}
+                      {empties.length > 0 && (
+                        <label style={{ ...rowSt, cursor: "pointer" }}>
+                          <span style={spSt} />
+                          <input type="checkbox" style={cbSt}
+                            checked={empties.every((v) => fdSelected.has(v))}
+                            onChange={() => toggleVals(empties)} />
+                          <span style={{ flex: 1, color: th.textMuted }}>(Empty)</span>
+                        </label>
+                      )}
+                      {/* Year rows */}
+                      {sortedYears.map((y) => {
+                        const yVals = getYearVals(y);
+                        const yAll = yVals.every((v) => fdSelected.has(v));
+                        const yNone = yVals.every((v) => !fdSelected.has(v));
+                        const yExp = fdDateExpanded.years.has(y);
+                        const sortedMonths = Object.keys(tree[y]).map(Number).sort((a, b) => a - b);
+                        return (
+                          <Fragment key={y}>
+                            <div style={{ ...rowSt, cursor: "default" }}>
+                              <span style={chevSt} onClick={() => setFdDateExpanded((p) => { const s = new Set(p.years); s.has(y) ? s.delete(y) : s.add(y); return { ...p, years: s }; })}>
+                                {yExp ? "▾" : "▸"}
+                              </span>
+                              <input type="checkbox" style={cbSt}
+                                ref={(el) => { if (el) el.indeterminate = !yAll && !yNone; }}
+                                checked={yAll} onChange={() => toggleVals(yVals)} />
+                              <span style={{ flex: 1, cursor: "pointer" }} onClick={() => setFdDateExpanded((p) => { const s = new Set(p.years); s.has(y) ? s.delete(y) : s.add(y); return { ...p, years: s }; })}>{y}</span>
+                            </div>
+                            {yExp && sortedMonths.map((mi) => {
+                              const mk = `${y}-${mi}`;
+                              const mVals = getMonthVals(y, mi);
+                              const mAll = mVals.every((v) => fdSelected.has(v));
+                              const mNone = mVals.every((v) => !fdSelected.has(v));
+                              const mExp = fdDateExpanded.months.has(mk);
+                              const sortedDays = Object.keys(tree[y][mi]).map(Number).sort((a, b) => a - b);
+                              return (
+                                <Fragment key={mk}>
+                                  <div style={{ ...rowSt, paddingLeft: 16, cursor: "default" }}>
+                                    <span style={chevSt} onClick={() => setFdDateExpanded((p) => { const s = new Set(p.months); s.has(mk) ? s.delete(mk) : s.add(mk); return { ...p, months: s }; })}>
+                                      {mExp ? "▾" : "▸"}
+                                    </span>
+                                    <input type="checkbox" style={cbSt}
+                                      ref={(el) => { if (el) el.indeterminate = !mAll && !mNone; }}
+                                      checked={mAll} onChange={() => toggleVals(mVals)} />
+                                    <span style={{ flex: 1, cursor: "pointer" }} onClick={() => setFdDateExpanded((p) => { const s = new Set(p.months); s.has(mk) ? s.delete(mk) : s.add(mk); return { ...p, months: s }; })}>{MONTH_NAMES[mi]}</span>
+                                  </div>
+                                  {mExp && sortedDays.map((d) => {
+                                    const dVals = tree[y][mi][d.toString()];
+                                    const dAll = dVals.every((v) => fdSelected.has(v));
+                                    return (
+                                      <label key={d} style={{ ...rowSt, paddingLeft: 32, cursor: "pointer" }}>
+                                        <span style={spSt} />
+                                        <input type="checkbox" style={cbSt} checked={dAll} onChange={() => toggleVals(dVals)} />
+                                        <span style={{ flex: 1 }}>{d}</span>
+                                      </label>
+                                    );
+                                  })}
+                                </Fragment>
+                              );
+                            })}
+                          </Fragment>
+                        );
+                      })}
+                    </>
+                  )}
+                </div>
+              );
+            })()}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 6, padding: "6px 8px", borderTop: `1px solid ${th.border}` }}>
               <button onClick={() => {
                 if (filterDropdown.colName === "__tags__") { up("tagFilter", null); setFilterDropdown(null); return; }
