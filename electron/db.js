@@ -1079,6 +1079,8 @@ class TimelineDB {
       groupFilters = [],
       dateRangeFilters = {},
       advancedFilters = [],
+      // IQL filter passthrough — WHERE SQL fragment from runIqlQuery
+      extraWhere = null,
     } = options;
 
     const db = meta.db;
@@ -1087,6 +1089,12 @@ class TimelineDB {
 
     // ── Standard filters (column, checkbox, date range, bookmarks, tags, advanced, search) ──
     this._applyStandardFilters(options, meta, whereConditions, params);
+
+    // ── IQL extra WHERE — injected by the query bar ──────────────────────────
+    if (extraWhere && extraWhere.sql) {
+      whereConditions.push(extraWhere.sql);
+      params.push(...(extraWhere.params || []));
+    }
 
     // ── Group filter (single - legacy) — queryRows-specific ──
     if (groupCol && groupValue !== undefined) {
@@ -14079,6 +14087,290 @@ class TimelineDB {
       return stats;
     } catch (err) {
       return { resolved: 0, total: 0, error: err.message };
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // IQL — IRFlow Query Language execution
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Execute a parsed IQL command list against a tab's database.
+   *
+   * For STATS queries  → returns all result rows in memory (typically small).
+   * For filter queries → returns the WHERE SQL + params so queryRows can use
+   *   them as an extra filter on top of normal column/search filters.
+   *
+   * @param {string}   tabId
+   * @param {Object[]} commands  – AST from queryEngine.parseIql()
+   * @returns {{ queryType, rows?, headers?, totalRows, extraWhereSql?, extraWhereParams?, selectCols?, sql?, error? }}
+   */
+  runIqlQuery(tabId, commands) {
+    const meta = this.databases.get(tabId);
+    if (!meta) return { error: "Tab not found or not yet loaded" };
+    if (!Array.isArray(commands) || commands.length === 0) return { error: "Empty query" };
+
+    try {
+      const statsCmd  = commands.find((c) => c.type === "STATS");
+      const whereCmd  = commands.find((c) => c.type === "WHERE");
+      const selectCmd = commands.find((c) => c.type === "SELECT");
+      const sortCmd   = commands.find((c) => c.type === "SORT");
+      const limitCmd  = commands.find((c) => c.type === "LIMIT");
+
+      if (statsCmd) {
+        return this._iqlRunStats(meta, whereCmd, statsCmd, sortCmd, limitCmd);
+      } else {
+        return this._iqlRunFilter(meta, whereCmd, selectCmd);
+      }
+    } catch (e) {
+      return { error: e.message };
+    }
+  }
+
+  /** Execute a STATS (GROUP BY + aggregate) query and return all rows. */
+  _iqlRunStats(meta, whereCmd, statsCmd, sortCmd, limitCmd) {
+    const params = [];
+    const whereParts = [];
+
+    if (whereCmd) {
+      const res = this._iqlExprToSql(whereCmd.expr, meta, params);
+      if (res.error) return { error: res.error };
+      if (res.sql) whereParts.push(res.sql);
+    }
+
+    const whereClause = whereParts.length ? `WHERE ${whereParts.join(" AND ")}` : "";
+
+    // Resolve GROUP BY columns
+    const groupCols = statsCmd.groupBy.map((col) => {
+      const sc = meta.colMap[col];
+      if (!sc) throw new Error(`Unknown column: "${col}"`);
+      return { original: col, safe: sc };
+    });
+
+    // Build aggregate expressions
+    const aggExprs = statsCmd.aggs.map((agg) => {
+      if (agg.func === "COUNT" && !agg.col) {
+        return { expr: `COUNT(*) AS "${agg.alias}"`, alias: agg.alias };
+      }
+      const sc = agg.col ? meta.colMap[agg.col] : null;
+      if (agg.col && !sc) throw new Error(`Unknown column: "${agg.col}"`);
+      let sqlExpr;
+      switch (agg.func) {
+        case "COUNT": sqlExpr = `COUNT(${sc})`;                          break;
+        case "SUM":   sqlExpr = `SUM(CAST(${sc} AS REAL))`;              break;
+        case "AVG":   sqlExpr = `ROUND(AVG(CAST(${sc} AS REAL)), 4)`;    break;
+        case "MIN":   sqlExpr = `MIN(${sc})`;                             break;
+        case "MAX":   sqlExpr = `MAX(${sc})`;                             break;
+        case "DC":    sqlExpr = `COUNT(DISTINCT ${sc})`;                  break;
+        default: throw new Error(`Unknown aggregate function: ${agg.func}`);
+      }
+      return { expr: `${sqlExpr} AS "${agg.alias}"`, alias: agg.alias };
+    });
+
+    // Column headers: group cols first, then agg aliases
+    const headers = [
+      ...groupCols.map((c) => c.original),
+      ...aggExprs.map((a) => a.alias),
+    ];
+
+    // SELECT list
+    const selectParts = [
+      ...groupCols.map((c) => `${c.safe} AS "${c.original}"`),
+      ...aggExprs.map((a) => a.expr),
+    ];
+
+    const groupByClause = groupCols.length
+      ? `GROUP BY ${groupCols.map((c) => c.safe).join(", ")}`
+      : "";
+
+    // ORDER BY — defaults to first agg DESC when no SORT given
+    let orderClause = aggExprs.length ? `ORDER BY "${aggExprs[0].alias}" DESC` : "";
+    if (sortCmd) {
+      const parts = sortCmd.items.map((item) => {
+        const gc = groupCols.find((c) => c.original === item.col || c.original.toLowerCase() === item.col.toLowerCase());
+        if (gc) {
+          if (meta.numericColumns.has(gc.original)) return `CAST(${gc.safe} AS REAL) ${item.dir}`;
+          return `${gc.safe} COLLATE NOCASE ${item.dir}`;
+        }
+        const ac = aggExprs.find((a) => a.alias === item.col || a.alias.toLowerCase() === item.col.toLowerCase());
+        if (ac) return `"${ac.alias}" ${item.dir}`;
+        return null;
+      }).filter(Boolean);
+      if (parts.length) orderClause = `ORDER BY ${parts.join(", ")}`;
+    }
+
+    const limitClause = limitCmd ? `LIMIT ${limitCmd.n}` : "LIMIT 50000";
+    const sql = [
+      `SELECT ${selectParts.join(", ")}`,
+      `FROM data`,
+      whereClause,
+      groupByClause,
+      orderClause,
+      limitClause,
+    ].filter(Boolean).join(" ");
+
+    const rawRows = meta.db.prepare(sql).all(...params);
+    const rows = rawRows.map((raw, i) => {
+      const row = { __idx: i + 1 };
+      for (const h of headers) row[h] = raw[h] ?? "";
+      return row;
+    });
+
+    return { queryType: "stats", rows, headers, totalRows: rows.length, sql, error: null };
+  }
+
+  /**
+   * Validate a filter/SELECT query and return the WHERE SQL fragment +
+   * resolved SELECT columns so queryRows can use them as an extra filter.
+   */
+  _iqlRunFilter(meta, whereCmd, selectCmd) {
+    const params = [];
+    let extraWhereSql = null;
+
+    if (whereCmd) {
+      const res = this._iqlExprToSql(whereCmd.expr, meta, params);
+      if (res.error) return { error: res.error };
+      extraWhereSql = res.sql || null;
+    }
+
+    // Validate SELECT columns
+    let selectCols = null;
+    if (selectCmd && selectCmd.cols.length > 0) {
+      for (const col of selectCmd.cols) {
+        if (!meta.colMap[col]) return { error: `Unknown column: "${col}"` };
+      }
+      selectCols = selectCmd.cols;
+    }
+
+    // Count matching rows for the status bar
+    const countSql = `SELECT COUNT(*) AS cnt FROM data${extraWhereSql ? ` WHERE ${extraWhereSql}` : ""}`;
+    const totalRows = meta.db.prepare(countSql).get(...params)?.cnt ?? 0;
+
+    return {
+      queryType: "filter",
+      extraWhereSql,
+      extraWhereParams: params,
+      selectCols,
+      totalRows,
+      error: null,
+    };
+  }
+
+  /** Recursively translate an IQL expression AST node to a SQL fragment. */
+  _iqlExprToSql(expr, meta, params) {
+    switch (expr.type) {
+      case "AND": {
+        const l = this._iqlExprToSql(expr.left,  meta, params);
+        const r = this._iqlExprToSql(expr.right, meta, params);
+        if (l.error) return l;
+        if (r.error) return r;
+        return { sql: `(${l.sql} AND ${r.sql})` };
+      }
+      case "OR": {
+        const l = this._iqlExprToSql(expr.left,  meta, params);
+        const r = this._iqlExprToSql(expr.right, meta, params);
+        if (l.error) return l;
+        if (r.error) return r;
+        return { sql: `(${l.sql} OR ${r.sql})` };
+      }
+      case "NOT": {
+        const inner = this._iqlExprToSql(expr.expr, meta, params);
+        if (inner.error) return inner;
+        return { sql: `NOT (${inner.sql})` };
+      }
+      case "IS_NULL": {
+        const sc = meta.colMap[expr.col];
+        if (!sc) return { error: `Unknown column: "${expr.col}"` };
+        return { sql: `(${sc} IS NULL OR ${sc} = '')` };
+      }
+      case "IS_NOT_NULL": {
+        const sc = meta.colMap[expr.col];
+        if (!sc) return { error: `Unknown column: "${expr.col}"` };
+        return { sql: `(${sc} IS NOT NULL AND ${sc} != '')` };
+      }
+      case "IN": {
+        const sc = meta.colMap[expr.col];
+        if (!sc) return { error: `Unknown column: "${expr.col}"` };
+        const hasNull = expr.values.some((v) => v.kind === "null");
+        const nonNull = expr.values.filter((v) => v.kind !== "null").map((v) => String(v.value));
+        const parts = [];
+        if (hasNull)       parts.push(`(${sc} IS NULL OR ${sc} = '')`);
+        if (nonNull.length === 1) { parts.push(`${sc} = ?`); params.push(nonNull[0]); }
+        else if (nonNull.length > 1) {
+          params.push(...nonNull);
+          parts.push(`${sc} IN (${nonNull.map(() => "?").join(",")})`);
+        }
+        return { sql: parts.length > 1 ? `(${parts.join(" OR ")})` : (parts[0] || "0=1") };
+      }
+      case "NOT_IN": {
+        const sc = meta.colMap[expr.col];
+        if (!sc) return { error: `Unknown column: "${expr.col}"` };
+        const vals = expr.values.filter((v) => v.kind !== "null").map((v) => String(v.value));
+        if (!vals.length) return { sql: "1=1" };
+        params.push(...vals);
+        return { sql: `${sc} NOT IN (${vals.map(() => "?").join(",")})` };
+      }
+      case "CONTAINS": {
+        const sc = meta.colMap[expr.col];
+        if (!sc) return { error: `Unknown column: "${expr.col}"` };
+        // Escape LIKE special chars in the value
+        params.push(`%${expr.value.replace(/[%_\\]/g, "\\$&")}%`);
+        return { sql: `${sc} LIKE ? ESCAPE '\\'` };
+      }
+      case "STARTSWITH": {
+        const sc = meta.colMap[expr.col];
+        if (!sc) return { error: `Unknown column: "${expr.col}"` };
+        params.push(`${expr.value.replace(/[%_\\]/g, "\\$&")}%`);
+        return { sql: `${sc} LIKE ? ESCAPE '\\'` };
+      }
+      case "ENDSWITH": {
+        const sc = meta.colMap[expr.col];
+        if (!sc) return { error: `Unknown column: "${expr.col}"` };
+        params.push(`%${expr.value.replace(/[%_\\]/g, "\\$&")}`);
+        return { sql: `${sc} LIKE ? ESCAPE '\\'` };
+      }
+      case "MATCHES": {
+        const sc = meta.colMap[expr.col];
+        if (!sc) return { error: `Unknown column: "${expr.col}"` };
+        params.push(expr.value);
+        return { sql: `REGEXP(?, ${sc})` };
+      }
+      case "CMP": {
+        const sc = meta.colMap[expr.col];
+        if (!sc) return { error: `Unknown column: "${expr.col}"` };
+
+        // Normalise operator
+        let op = expr.op;
+        if (op === "==") op = "=";
+        if (op === "<>") op = "!=";
+
+        const { kind, value } = expr.value;
+
+        // NULL literal
+        if (kind === "null") {
+          return { sql: op === "=" ? `(${sc} IS NULL OR ${sc} = '')` : `(${sc} IS NOT NULL AND ${sc} != '')` };
+        }
+
+        // Numeric value: use CAST comparison for correct ordering/equality
+        if (kind === "number") {
+          if (meta.tsColumns.has(expr.col)) {
+            // Timestamp: compare with sort_datetime helper
+            params.push(String(value));
+            return { sql: `sort_datetime(${sc}) ${op} sort_datetime(?)` };
+          }
+          params.push(value);
+          return { sql: `CAST(${sc} AS REAL) ${op} ?` };
+        }
+
+        // String value
+        const strVal = String(value);
+        params.push(strVal);
+        // For = and != use case-insensitive comparison; for range ops use raw collation
+        if (op === "=" || op === "!=") return { sql: `${sc} ${op} ? COLLATE NOCASE` };
+        return { sql: `${sc} ${op} ?` };
+      }
+      default:
+        return { error: `Unknown expression type: ${expr.type}` };
     }
   }
 

@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld("tle", {
 
   // Data queries (SQLite-backed)
   queryRows: (tabId, options) => ipcRenderer.invoke("query-rows", { tabId, options }),
+  runIqlQuery: (tabId, commands) => ipcRenderer.invoke("run-iql-query", { tabId, commands }),
   toggleBookmark: (tabId, rowId) => ipcRenderer.invoke("toggle-bookmark", { tabId, rowId }),
   setBookmarks: (tabId, rowIds, add) => ipcRenderer.invoke("set-bookmarks", { tabId, rowIds, add }),
   getBookmarkCount: (tabId) => ipcRenderer.invoke("get-bookmark-count", { tabId }),

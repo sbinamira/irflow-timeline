@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo, Fragment } from "react";
 import { CHAIN_RULE_MAP, SUS_PATHS, SAFE_PROCS, ENCODED_PS, CRED_DUMP_CMD, NTDS_EXTRACT, LSASS_TOOLS, ACCOUNT_MANIP, DEFENSE_EVASION, NETWORK_SCANNERS, AD_RECON_TOOLS, RMM_TOOLS, EXFIL_TOOLS, ARCHIVE_SUSPECT } from "./detection-rules.js";
+import { parseIql } from "./queryEngine.js";
 
 const ROW_HEIGHT = 26;
 const HEADER_HEIGHT = 34;
@@ -1032,6 +1033,16 @@ export default function App() {
   const [dateTimeFormat, setDateTimeFormat] = useState("yyyy-MM-dd HH:mm:ss");
   const [timezone, setTimezone] = useState("UTC");
   const [themeName, setThemeName] = useState("dark");
+
+  // ── IQL Query Bar state ──────────────────────────────────────────────────
+  const [queryBarVisible, setQueryBarVisible] = useState(false);
+  const [queryText, setQueryText]             = useState("");
+  const [queryError, setQueryError]           = useState(null);
+  const [queryRunning, setQueryRunning]       = useState(false);
+  const [queryHistory, setQueryHistory]       = useState([]); // persisted in memory per session
+  const [queryHistOpen, setQueryHistOpen]     = useState(false);
+  const queryInputRef = useRef(null);
+
   const [histogramVisible, setHistogramVisible] = useState(false);
   const [histogramCol, setHistogramCol] = useState(null);
   const [histogramData, setHistogramData] = useState([]);
@@ -1348,6 +1359,7 @@ export default function App() {
 
   const fetchData = useCallback(async (tab, centerRow = 0) => {
     if (!tle || !tab) return;
+    if (tab.iqlMode === "stats") return; // stats results are fully in-memory — no IPC fetch needed
     // Stale request prevention: capture current fetch ID before async work
     const myFetchId = ++fetchId.current;
     // Skip query for single-character searches (too broad, expensive on large datasets)
@@ -1355,7 +1367,8 @@ export default function App() {
     const effectiveSearch = rawSearch && rawSearch.trim().length < 2 ? "" : rawSearch;
     const { columnFilters, checkboxFilters } = activeFilters(tab);
     // Build cache key for this query configuration
-    const cacheKey = `${effectiveSearch}|${tab.searchMode}|${tab.sortCol}|${tab.sortDir}|${tab.showBookmarkedOnly}|${tab.searchCondition || "contains"}|${tab.tagFilter || ""}|${JSON.stringify(tab.dateRangeFilters)}|${JSON.stringify(tab.advancedFilters)}|${JSON.stringify(columnFilters)}|${JSON.stringify(checkboxFilters)}`;
+    const iqlSig = tab.iqlExtraWhere ? `${tab.iqlExtraWhere.sql}|${JSON.stringify(tab.iqlExtraWhere.params)}` : "";
+    const cacheKey = `${effectiveSearch}|${tab.searchMode}|${tab.sortCol}|${tab.sortDir}|${tab.showBookmarkedOnly}|${tab.searchCondition || "contains"}|${tab.tagFilter || ""}|${JSON.stringify(tab.dateRangeFilters)}|${JSON.stringify(tab.advancedFilters)}|${JSON.stringify(columnFilters)}|${JSON.stringify(checkboxFilters)}|${iqlSig}`;
     if (tab.groupByColumns?.length > 0) {
       const groupCol = tab.groupByColumns[0];
       const groupData = await tle.getGroupValues(tab.id, groupCol, {
@@ -1390,6 +1403,7 @@ export default function App() {
       columnFilters, checkboxFilters,
       bookmarkedOnly: tab.showBookmarkedOnly,
       tagFilter: (tab.disabledFilters || new Set()).has("__tags__") ? null : (tab.tagFilter || null),
+      extraWhere: tab.iqlExtraWhere || null,
       dateRangeFilters: tab.dateRangeFilters || {}, advancedFilters: tab.advancedFilters || [],
     });
     if (fetchId.current !== myFetchId) return; // Stale — newer fetch in flight
@@ -1413,6 +1427,97 @@ export default function App() {
     queryTimer.current = setTimeout(() => fetchData(tab), QUERY_DEBOUNCE);
   }, [fetchData]);
 
+  // ── IQL helpers ──────────────────────────────────────────────────────────
+
+  /** Run the query in the query bar against the active tab. */
+  const runIqlQuery = useCallback(async () => {
+    if (!queryText.trim() || !ct || !tle) return;
+    setQueryError(null);
+    setQueryRunning(true);
+
+    try {
+      const { commands, error: parseError } = parseIql(queryText.trim());
+      if (parseError) { setQueryError(parseError); return; }
+      if (!commands || commands.length === 0) { setQueryError("Empty query"); return; }
+
+      // Resolve FROM — find matching tab by name (partial match)
+      const fromCmd = commands.find((c) => c.type === "FROM");
+      let targetTabId = ct.id;
+      if (fromCmd) {
+        const src = fromCmd.source.toLowerCase().replace(/\.[^.]+$/, ""); // strip ext
+        const matched = tabs.find((t) => {
+          const n = t.name.toLowerCase().replace(/\.[^.]+$/, "");
+          return n === src || n.includes(src) || src.includes(n);
+        });
+        if (matched) {
+          targetTabId = matched.id;
+        } else if (!ct.name.toLowerCase().includes(src) && !src.includes(ct.name.toLowerCase().replace(/\.[^.]+$/, ""))) {
+          setQueryError(`Unknown source "${fromCmd.source}". Open tabs: ${tabs.map((t) => t.name).join(", ")}`);
+          return;
+        }
+      }
+
+      const result = await tle.runIqlQuery(targetTabId, commands);
+      if (result?.__ipcError || result?.error) {
+        setQueryError(result.error || result.message || "Query failed");
+        return;
+      }
+
+      // Record in history
+      setQueryHistory((prev) => {
+        const deduped = prev.filter((q) => q !== queryText.trim());
+        return [queryText.trim(), ...deduped].slice(0, 50);
+      });
+
+      if (result.queryType === "stats") {
+        // Stats: rows are already in memory — swap the tab's display data
+        setTabs((prev) => prev.map((t) => t.id === activeTab ? {
+          ...t,
+          iqlMode: "stats",
+          iqlQuery: queryText.trim(),
+          iqlRows: result.rows || [],
+          iqlHeaders: result.headers || [],
+          iqlTotalRows: result.totalRows || 0,
+          iqlExtraWhere: null,
+          iqlSelectCols: null,
+        } : t));
+      } else {
+        // Filter: store extra WHERE for queryRows to use; trigger refetch
+        setTabs((prev) => prev.map((t) => t.id === activeTab ? {
+          ...t,
+          iqlMode: "filter",
+          iqlQuery: queryText.trim(),
+          iqlRows: [],
+          iqlHeaders: [],
+          iqlTotalRows: result.totalRows || 0,
+          iqlExtraWhere: result.extraWhereSql ? { sql: result.extraWhereSql, params: result.extraWhereParams || [] } : null,
+          iqlSelectCols: result.selectCols || null,
+        } : t));
+        // fetchData will re-run automatically because iqlExtraWhere changed (tracked via immediateDeps below)
+      }
+    } catch (e) {
+      setQueryError(e.message || "Query failed");
+    } finally {
+      setQueryRunning(false);
+    }
+  }, [queryText, ct, tabs, activeTab, tle]);
+
+  /** Exit IQL mode and restore normal view. */
+  const clearIqlMode = useCallback(() => {
+    setQueryError(null);
+    if (!activeTab) return;
+    setTabs((prev) => prev.map((t) => t.id === activeTab ? {
+      ...t,
+      iqlMode: null,
+      iqlQuery: "",
+      iqlRows: [],
+      iqlHeaders: [],
+      iqlTotalRows: 0,
+      iqlExtraWhere: null,
+      iqlSelectCols: null,
+    } : t));
+  }, [activeTab]);
+
   // Cleanup debounce timer on unmount to prevent stale callbacks
   useEffect(() => () => {
     if (queryTimer.current) clearTimeout(queryTimer.current);
@@ -1434,11 +1539,13 @@ export default function App() {
     const drSig = ct?.dateRangeFilters ? Object.keys(ct.dateRangeFilters).sort().map(k => { const r = ct.dateRangeFilters[k]; return `${k}=${r.from || ""}-${r.to || ""}`; }).join(",") : "";
     const dfSig = ct?.disabledFilters ? [...ct.disabledFilters].sort().join(",") : "";
     const afSig = ct?.advancedFilters?.map(f => `${f.column}:${f.operator}:${f.value}:${f.logic}`).join(",") || "";
-    return `${ct?.sortCol}|${ct?.sortDir}|${ct?.showBookmarkedOnly}|${cbfSig}|${gbSig}|${drSig}|${ct?.searchHighlight}|${ct?.searchCondition}|${dfSig}|${ct?.tagFilter || ""}|${afSig}`;
-  }, [ct?.sortCol, ct?.sortDir, ct?.showBookmarkedOnly, ct?.checkboxFilters, ct?.groupByColumns, ct?.dateRangeFilters, ct?.searchHighlight, ct?.searchCondition, ct?.disabledFilters, ct?.tagFilter, ct?.advancedFilters]);
+    const iqlSig = ct?.iqlExtraWhere ? `${ct.iqlExtraWhere.sql}|${JSON.stringify(ct.iqlExtraWhere.params)}` : (ct?.iqlMode || "");
+    return `${ct?.sortCol}|${ct?.sortDir}|${ct?.showBookmarkedOnly}|${cbfSig}|${gbSig}|${drSig}|${ct?.searchHighlight}|${ct?.searchCondition}|${dfSig}|${ct?.tagFilter || ""}|${afSig}|${iqlSig}`;
+  }, [ct?.sortCol, ct?.sortDir, ct?.showBookmarkedOnly, ct?.checkboxFilters, ct?.groupByColumns, ct?.dateRangeFilters, ct?.searchHighlight, ct?.searchCondition, ct?.disabledFilters, ct?.tagFilter, ct?.advancedFilters, ct?.iqlExtraWhere, ct?.iqlMode]);
 
   useEffect(() => {
     if (!ct || !ct.dataReady) return;
+    if (ct.iqlMode === "stats") return; // stats rows are in-memory — no fetch needed
     if (prevDebouncedDeps.current !== debouncedDeps) {
       prevDebouncedDeps.current = debouncedDeps;
       setSearchLoading(true);
@@ -1493,10 +1600,18 @@ export default function App() {
     return () => ro.disconnect();
   }, [histogramVisible]);
 
+  // ── Reset scroll when entering stats IQL mode so all rows are visible ──
+  useEffect(() => {
+    if (ct?.iqlMode === "stats" && scrollRef.current) {
+      scrollRef.current.scrollTop = 0;
+      setScrollTop(0);
+    }
+  }, [ct?.iqlMode, ct?.id]);
+
   // ── Scroll-driven window fetch (server-side virtual scrolling) ──
   const scrollFetchTimer = useRef(null);
   useEffect(() => {
-    if (!ct || !ct.dataReady || isGrouped) return;
+    if (!ct || !ct.dataReady || isGrouped || ct.iqlMode === "stats") return;
     const scrollRow = Math.floor(scrollTop / ROW_HEIGHT);
     const windowEnd = (ct.rowOffset || 0) + (ct.rows?.length || 0);
     const needsFetch = scrollRow < (ct.rowOffset || 0) + VIRTUAL_AHEAD
@@ -2178,7 +2293,13 @@ export default function App() {
   // ── Computed headers ─────────────────────────────────────────────
   const allVisH = useMemo(() => {
     if (!ct) return [];
-    const visSet = new Set(ct.headers.filter((h) => !ct.hiddenColumns.has(h)));
+    // Stats IQL mode: show only the result columns (no hide/pin/order applied)
+    if (ct.iqlMode === "stats" && ct.iqlHeaders?.length) return ct.iqlHeaders;
+    // Filter IQL mode with SELECT: restrict to selected columns while respecting hidden/order
+    const baseHeaders = (ct.iqlMode === "filter" && ct.iqlSelectCols?.length)
+      ? ct.headers.filter((h) => ct.iqlSelectCols.includes(h))
+      : ct.headers;
+    const visSet = new Set(baseHeaders.filter((h) => !ct.hiddenColumns.has(h)));
     if (ct.columnOrder?.length > 0) {
       const ordered = ct.columnOrder.filter((h) => visSet.has(h));
       const orderSet = new Set(ct.columnOrder);
@@ -2186,7 +2307,7 @@ export default function App() {
       return [...ordered, ...rest];
     }
     return [...visSet];
-  }, [ct?.headers, ct?.hiddenColumns, ct?.columnOrder]);
+  }, [ct?.headers, ct?.hiddenColumns, ct?.columnOrder, ct?.iqlMode, ct?.iqlHeaders, ct?.iqlSelectCols]);
 
   const pinnedH = useMemo(() => {
     if (!ct) return [];
@@ -2243,7 +2364,21 @@ export default function App() {
   }, [isGrouped, ct?.groupData, ct?.expandedGroups, ct?.groupByColumns]);
 
   // ── Virtual scroll ───────────────────────────────────────────────
-  const rows = ct?.rows || [];
+  // In stats IQL mode, rows come from in-memory iqlRows (sorted locally if needed)
+  const rows = useMemo(() => {
+    if (ct?.iqlMode === "stats") {
+      const r = ct.iqlRows || [];
+      if (!ct.sortCol) return r;
+      return [...r].sort((a, b) => {
+        const v1 = a[ct.sortCol] ?? "", v2 = b[ct.sortCol] ?? "";
+        const n1 = parseFloat(v1), n2 = parseFloat(v2);
+        const cmp = (!isNaN(n1) && !isNaN(n2)) ? n1 - n2 : String(v1).localeCompare(String(v2), undefined, { numeric: true });
+        return ct.sortDir === "desc" ? -cmp : cmp;
+      });
+    }
+    return ct?.rows || [];
+  }, [ct?.iqlMode, ct?.iqlRows, ct?.rows, ct?.sortCol, ct?.sortDir]);
+
   const displayRows = isGrouped && groupedItems ? groupedItems : rows;
   displayRowsRef.current = displayRows;
   isGroupedRef.current = isGrouped;
@@ -2251,9 +2386,11 @@ export default function App() {
   // Get a row by absolute index (accounts for windowed offset in flat mode)
   const getRowAt = useCallback((absIdx) => {
     if (isGrouped) return displayRows[absIdx] || null;
+    // Stats mode: all rows in memory, no offset
+    if (ct?.iqlMode === "stats") return rows[absIdx] || null;
     const localIdx = absIdx - (ct?.rowOffset || 0);
     return (localIdx >= 0 && localIdx < rows.length) ? rows[localIdx] : null;
-  }, [isGrouped, displayRows, rows, ct?.rowOffset]);
+  }, [isGrouped, displayRows, rows, ct?.rowOffset, ct?.iqlMode]);
 
   // Primary selected row (last clicked) for detail panel
   const selectedRow = lastClickedRow !== null && selectedRows.has(lastClickedRow) ? lastClickedRow : null;
@@ -2343,18 +2480,21 @@ export default function App() {
   };
 
   const detailVisible = detailPanelOpen && selectedRowData !== null;
-  const totalCount = isGrouped ? displayRows.length : (ct?.totalFiltered || 0);
+  const totalCount = isGrouped ? displayRows.length
+    : ct?.iqlMode === "stats" ? (ct?.iqlTotalRows || rows.length)
+    : (ct?.totalFiltered || 0);
   const rowOffset = ct?.rowOffset || 0;
   const totalH = totalCount * ROW_HEIGHT;
   // Use actual scroll container height when available (adapts to zoom/resize), fall back to estimate
   const vh = (scrollRef.current?.clientHeight || (viewportH - 190)) - (detailVisible ? detailPanelHeight : 0);
   const si = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
   const ei = Math.min(totalCount, Math.ceil((scrollTop + vh) / ROW_HEIGHT) + OVERSCAN);
-  // For grouped mode: direct slice. For flat mode: map to windowed cache via rowOffset.
-  const visible = useMemo(() => isGrouped
-    ? displayRows.slice(si, ei)
-    : rows.slice(Math.max(0, si - rowOffset), Math.max(0, ei - rowOffset)),
-    [isGrouped, displayRows, rows, si, ei, rowOffset]);
+  // For grouped mode: direct slice. Stats IQL mode: direct slice (all in memory, offset=0). Flat mode: windowed cache.
+  const visible = useMemo(() => {
+    if (isGrouped) return displayRows.slice(si, ei);
+    if (ct?.iqlMode === "stats") return rows.slice(si, ei);
+    return rows.slice(Math.max(0, si - rowOffset), Math.max(0, ei - rowOffset));
+  }, [isGrouped, displayRows, rows, si, ei, rowOffset, ct?.iqlMode]);
 
   // Skeleton rows for positions outside the cached window (shown during fast scroll)
   const skeletonIndices = useMemo(() => {
@@ -2711,6 +2851,15 @@ export default function App() {
       if (mod && e.shiftKey && e.key === "O") { e.preventDefault(); handleLoadSession(); }
       if (mod && e.key === "o") { e.preventDefault(); tle?.openFileDialog(); }
       if (mod && e.key === "f" && !e.shiftKey) { e.preventDefault(); document.getElementById("gs")?.focus(); }
+      // Cmd+K — toggle IQL query bar and focus it
+      if (mod && e.key === "k") {
+        e.preventDefault();
+        setQueryBarVisible((v) => {
+          if (!v) { setTimeout(() => queryInputRef.current?.focus(), 50); return true; }
+          return false;
+        });
+        return;
+      }
       if (mod && e.shiftKey && e.key === "f") { e.preventDefault(); setModal({ type: "crossfind" }); }
       if (mod && e.key === "e") { e.preventDefault(); handleExport(); }
       if (mod && e.key === "b") { e.preventDefault(); if (ct) up("showBookmarkedOnly", !ct.showBookmarkedOnly); }
@@ -3537,6 +3686,11 @@ export default function App() {
           <button className="tle-tb" onClick={() => setHistogramVisible((v) => !v)} style={{ ...tb, color: histogramVisible ? th.accent : th.textDim, padding: "4px 8px" }} title="Toggle timeline histogram">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="12" width="4" height="9" rx="1" /><rect x="10" y="6" width="4" height="15" rx="1" /><rect x="17" y="3" width="4" height="18" rx="1" /></svg>
           </button>
+          <span style={{ width: 1, height: 14, background: th.glassBorder, display: "inline-block" }} />
+          {/* IQL Query Bar toggle */}
+          <button className="tle-tb" onClick={() => { setQueryBarVisible((v) => { if (!v) setTimeout(() => queryInputRef.current?.focus(), 50); return !v; }); }} style={{ ...tb, color: queryBarVisible ? th.accent : th.textDim, padding: "4px 8px", fontFamily: "-apple-system, sans-serif", fontWeight: 700, letterSpacing: 0.5 }} title="Toggle IQL Query Bar (⌘K)">
+            IQL
+          </button>
           </div>{/* end settings capsule */}
           {proximityFilter && ct?.dateRangeFilters?.[proximityFilter.tsCol] && (
             <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 8px", background: `${th.warning}22`, border: `1px solid ${th.warning}4D`, borderRadius: 10, color: th.warning, fontSize: 10, fontFamily: "-apple-system,sans-serif", whiteSpace: "nowrap" }}
@@ -3971,6 +4125,111 @@ export default function App() {
           </div>
         );
       })()}
+
+      {/* ── IQL Query Bar ─────────────────────────────────────────── */}
+      {queryBarVisible && ct && (
+        <div style={{ background: th.bgAlt, borderBottom: `1px solid ${th.glassBorder}`, padding: "8px 12px", display: "flex", flexDirection: "column", gap: 5, flexShrink: 0, zIndex: 90, WebkitAppRegion: "no-drag" }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+            {/* Label */}
+            <div style={{ fontSize: 10, fontWeight: 700, color: th.accent, letterSpacing: 1.2, padding: "5px 0", flexShrink: 0, fontFamily: "-apple-system, sans-serif", userSelect: "none" }}>IQL</div>
+
+            {/* Query textarea */}
+            <div style={{ flex: 1, position: "relative" }}>
+              <textarea
+                ref={queryInputRef}
+                value={queryText}
+                onChange={(e) => { setQueryText(e.target.value); setQueryError(null); }}
+                onKeyDown={(e) => {
+                  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); runIqlQuery(); }
+                  if (e.key === "Escape") { e.preventDefault(); setQueryBarVisible(false); }
+                }}
+                placeholder={`FROM ${ct.name || "file"} | WHERE column == value | STATS COUNT() BY column | SORT count() DESC`}
+                spellCheck={false}
+                rows={queryText.includes("\n") ? Math.min(5, queryText.split("\n").length + 1) : 1}
+                style={{
+                  width: "100%", boxSizing: "border-box",
+                  background: th.bg, border: `1px solid ${queryError ? (th.danger || "#f85149") : (queryBarVisible ? th.borderAccent : th.glassBorder)}`,
+                  borderRadius: 6, color: th.text,
+                  fontFamily: "'SF Mono','Fira Code',Menlo,monospace", fontSize: fontSize,
+                  padding: "5px 8px", resize: "none",
+                  lineHeight: 1.5, outline: "none", transition: "border-color 0.15s",
+                }}
+              />
+            </div>
+
+            {/* Run button */}
+            <button
+              onClick={runIqlQuery}
+              disabled={!queryText.trim() || queryRunning || !ct.dataReady}
+              style={{ background: th.accent + "22", border: `1px solid ${th.accent}55`, borderRadius: 6, color: th.accent, cursor: (!queryText.trim() || queryRunning) ? "default" : "pointer", fontSize: 11, padding: "5px 14px", fontFamily: "-apple-system, sans-serif", fontWeight: 700, flexShrink: 0, opacity: (!queryText.trim() || queryRunning || !ct.dataReady) ? 0.45 : 1, whiteSpace: "nowrap" }}
+              title="Run query (⌘↵)"
+            >{queryRunning ? "…" : "▶  Run"}</button>
+
+            {/* History dropdown */}
+            {queryHistory.length > 0 && (
+              <div style={{ position: "relative" }}>
+                <button onClick={() => setQueryHistOpen((v) => !v)} style={{ background: "transparent", border: `1px solid ${th.glassBorder}`, borderRadius: 6, color: th.textDim, cursor: "pointer", fontSize: 11, padding: "5px 8px", flexShrink: 0 }} title="Query history">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                </button>
+                {queryHistOpen && (<>
+                  <div onClick={() => setQueryHistOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 149 }} />
+                  <div style={{ position: "absolute", right: 0, top: "100%", marginTop: 4, background: th.modalBg, border: `1px solid ${th.glassBorder}`, borderRadius: 8, padding: "4px 0", zIndex: 150, minWidth: 340, maxWidth: 560, boxShadow: "0 8px 32px rgba(0,0,0,0.45)", maxHeight: 280, overflow: "auto" }}>
+                    <div style={{ padding: "4px 12px 6px", fontSize: 10, color: th.textMuted, fontFamily: "-apple-system, sans-serif", borderBottom: `1px solid ${th.border}` }}>Recent queries</div>
+                    {queryHistory.slice(0, 30).map((q, i) => (
+                      <div key={i} onClick={() => { setQueryText(q); setQueryHistOpen(false); setQueryError(null); setTimeout(() => queryInputRef.current?.focus(), 30); }}
+                        style={{ padding: "6px 12px", cursor: "pointer", fontSize: 11, fontFamily: "'SF Mono','Fira Code',Menlo,monospace", color: th.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = th.selection}
+                        onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                        title={q}>{q}</div>
+                    ))}
+                    <div style={{ height: 1, background: th.border, margin: "4px 8px" }} />
+                    <div onClick={() => { setQueryHistory([]); setQueryHistOpen(false); }} style={{ padding: "5px 12px", cursor: "pointer", fontSize: 11, color: th.textMuted, fontFamily: "-apple-system, sans-serif" }} onMouseEnter={(e) => e.currentTarget.style.background = th.selection} onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}>Clear history</div>
+                  </div>
+                </>)}
+              </div>
+            )}
+
+            {/* Clear IQL mode button — only shown when IQL is active */}
+            {ct.iqlMode && (
+              <button onClick={() => { clearIqlMode(); setQueryText(""); }}
+                style={{ background: (th.danger || "#f85149") + "18", border: `1px solid ${(th.danger || "#f85149")}44`, borderRadius: 6, color: th.danger || "#f85149", cursor: "pointer", fontSize: 11, padding: "5px 10px", fontFamily: "-apple-system, sans-serif", fontWeight: 600, flexShrink: 0, whiteSpace: "nowrap" }}
+                title="Exit query mode and restore full dataset">✕ Clear</button>
+            )}
+          </div>
+
+          {/* Error display */}
+          {queryError && (
+            <div style={{ fontSize: 11, color: th.danger || "#f85149", fontFamily: "-apple-system, sans-serif", paddingLeft: 40, display: "flex", alignItems: "flex-start", gap: 5 }}>
+              <span style={{ flexShrink: 0 }}>⚠</span>
+              <span style={{ wordBreak: "break-word" }}>{queryError}</span>
+            </div>
+          )}
+
+          {/* Active query status */}
+          {ct.iqlMode && !queryError && (
+            <div style={{ fontSize: 10, color: th.accent, fontFamily: "-apple-system, sans-serif", paddingLeft: 40, display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: th.accent, display: "inline-block", flexShrink: 0 }} />
+              {ct.iqlMode === "stats"
+                ? `Stats — ${(ct.iqlTotalRows || 0).toLocaleString()} result${ct.iqlTotalRows !== 1 ? "s" : ""}`
+                : `Filter active — ${(ct.totalFiltered || 0).toLocaleString()} matching rows`}
+              {ct.iqlQuery && <span style={{ color: th.textMuted, marginLeft: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 400 }}>{ct.iqlQuery}</span>}
+            </div>
+          )}
+
+          {/* Syntax hint */}
+          {!ct.iqlMode && !queryError && (
+            <div style={{ fontSize: 10, color: th.textMuted, fontFamily: "-apple-system, sans-serif", paddingLeft: 40 }}>
+              <span style={{ color: th.textDim }}>FROM</span> source&nbsp;
+              <span style={{ color: th.textDim }}>| WHERE</span> col == val&nbsp;
+              <span style={{ color: th.textDim }}>| STATS</span> COUNT() BY col&nbsp;
+              <span style={{ color: th.textDim }}>| SORT</span> col DESC&nbsp;
+              <span style={{ color: th.textDim }}>| LIMIT</span> 100&nbsp;
+              <span style={{ color: th.textDim }}>| SELECT</span> col1, col2
+              &nbsp;&nbsp;<span style={{ opacity: 0.6 }}>⌘↵ to run · Operators: == != &lt; &gt; IN() CONTAINS STARTSWITH ENDSWITH MATCHES IS NULL</span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Content area */}
       {isImporting ? (
@@ -4434,6 +4693,14 @@ export default function App() {
             {(ct.advancedFilters?.length > 0) && <span style={{ color: th.accent }}>{ct.advancedFilters.length} advanced filter{ct.advancedFilters.length > 1 ? "s" : ""}</span>}
             {ct.searchHighlight && ct.searchTerm && <span style={{ color: th.warning }}>Highlight mode</span>}
             {ct.iocHighlights?.length > 0 && <span onClick={() => up("iocHighlights", null)} style={{ color: "#f0883e", cursor: "pointer" }} title="IOC matches are highlighted — click to clear">IOC Highlights ({ct.iocHighlights.length}) ✕</span>}
+            {ct.iqlMode && (
+              <span onClick={() => { setQueryBarVisible(true); setTimeout(() => queryInputRef.current?.focus(), 50); }}
+                style={{ color: th.accent, fontWeight: 700, cursor: "pointer", background: th.accent + "18", border: `1px solid ${th.accent}44`, borderRadius: 4, padding: "1px 6px", letterSpacing: 0.5, fontSize: 10 }}
+                title={`IQL ${ct.iqlMode} mode active — click to edit query`}>
+                IQL {ct.iqlMode === "stats" ? "STATS" : "FILTER"}
+                <span onClick={(e) => { e.stopPropagation(); clearIqlMode(); }} style={{ marginLeft: 4, opacity: 0.7, fontWeight: 400 }} title="Exit IQL mode">✕</span>
+              </span>
+            )}
             {ct._detectedProfile && <span style={{ color: th.success }}>{ct._detectedProfile}</span>}
             {totalActiveFilters > 0 && <span onClick={clearAllFilters} style={{ cursor: "pointer", color: th.danger || "#f85149", fontWeight: 600, textDecoration: "underline", textDecorationStyle: "dotted" }} title={`Clear all ${totalActiveFilters} active filter${totalActiveFilters > 1 ? "s" : ""}`}>Clear All ({totalActiveFilters})</span>}
             <span onClick={() => { if (ct?.dataReady) setModal({ type: "editFilter" }); }} style={{ cursor: ct?.dataReady ? "pointer" : "default", color: ct?.advancedFilters?.length > 0 ? th.accent : th.textMuted, textDecoration: ct?.dataReady ? "underline" : "none" }}>Edit Filter</span>

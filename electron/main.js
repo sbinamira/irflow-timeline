@@ -571,6 +571,11 @@ safeHandle("query-rows", (event, { tabId, options }) => {
   return db.queryRows(tabId, options);
 });
 
+// IQL — execute a parsed IRFlow Query Language AST
+safeHandle("run-iql-query", (event, { tabId, commands }) => {
+  return db.runIqlQuery(tabId, commands);
+});
+
 // Toggle bookmark
 safeHandle("toggle-bookmark", (event, { tabId, rowId }) => {
   return db.toggleBookmark(tabId, rowId);
