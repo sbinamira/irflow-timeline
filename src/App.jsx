@@ -1104,6 +1104,34 @@ const ETS_FORMAT_PRESETS = {
   },
 };
 
+// ── Schema Builder — semantic type palette ───────────────────────────────────
+const SEMANTIC_TYPES = [
+  { id:"timestamp",    label:"Timestamp",   color:"#58a6ff" },
+  { id:"hostname",     label:"Hostname",    color:"#3fb950" },
+  { id:"username",     label:"Username",    color:"#d29922" },
+  { id:"src_ip",       label:"Src IP",      color:"#f0883e" },
+  { id:"dst_ip",       label:"Dst IP",      color:"#e85d2a" },
+  { id:"src_port",     label:"Src Port",    color:"#79c0ff" },
+  { id:"dst_port",     label:"Dst Port",    color:"#56d364" },
+  { id:"process_name", label:"Process",     color:"#d2a8ff" },
+  { id:"command_line", label:"Cmdline",     color:"#ffa657" },
+  { id:"file_path",    label:"File Path",   color:"#7ee787" },
+  { id:"registry_key", label:"Registry",    color:"#f85149" },
+  { id:"hash",         label:"Hash",        color:"#b3d4ff" },
+  { id:"event_id",     label:"Event ID",    color:"#ffdf5d" },
+  { id:"description",  label:"Description", color:"#8b949e" },
+  { id:"tag",          label:"Tag",         color:"#e5e7eb" },
+];
+
+// Maps semantic type id → ETS header for ETS View pre-seeding
+const SEMANTIC_TO_ETS = {
+  timestamp:    "Date / Time (UTC)",
+  hostname:     "Hostname (from evidence)",
+  src_ip:       "Src Hostname/IP",
+  dst_ip:       "Dst Hostname/IP",
+  username:     "Src Account",
+};
+
 // Detect known tool format from column headers + sourceFormat.
 // Returns "evtxecmd" | "mft" | null.
 function _detectEtsFormat(fileHeaders, sourceFormat) {
@@ -1142,7 +1170,45 @@ function _etsScore(etsH, fileH) {
   const tokInFlat = et.some(t => t.length >= 3 && ff.includes(t)) ? 0.15 : 0;
   return Math.min(1, dice + flatSub + tokInFlat);
 }
-function matchColumnsToETS(fileHeaders, sourceFormat) {
+function matchColumnsToETS(fileHeaders, sourceFormat, semanticTypes) {
+  // ── Semantic type pre-seeding (from Schema Builder labels) ───────────────
+  if (semanticTypes && Object.keys(semanticTypes).length > 0) {
+    const seeded = new Map();
+    const usedFile = new Set();
+    for (const [typeId, colName] of Object.entries(semanticTypes)) {
+      const etsH = SEMANTIC_TO_ETS[typeId];
+      if (etsH && fileHeaders.includes(colName) && !seeded.has(etsH)) {
+        seeded.set(etsH, colName);
+        usedFile.add(colName);
+      }
+    }
+    if (seeded.size > 0) {
+      // Fill remaining ETS headers with synonym + fuzzy fallback, skipping already-seeded
+      const THRESHOLD = 0.25;
+      const pairs = [];
+      ETS_HEADERS.forEach((e, ei) => {
+        if (seeded.has(e)) return;
+        fileHeaders.forEach((f, fi) => {
+          if (usedFile.has(f)) return;
+          const synEts = _etsSynonymLookup.get(f.toLowerCase());
+          if (synEts === e) { pairs.push({ ei, fi, s: 1.0 }); return; }
+          const s = _etsScore(e, f);
+          if (s >= THRESHOLD) pairs.push({ ei, fi, s });
+        });
+      });
+      pairs.sort((a, b) => b.s - a.s);
+      const result = new Map(seeded);
+      for (const { ei, fi } of pairs) {
+        const etsH = ETS_HEADERS[ei];
+        if (result.has(etsH) || usedFile.has(fi)) continue;
+        result.set(etsH, fileHeaders[fi]);
+        usedFile.add(fi);
+      }
+      for (const e of ETS_HEADERS) if (!result.has(e)) result.set(e, null);
+      return result;
+    }
+  }
+
   const format = _detectEtsFormat(fileHeaders, sourceFormat);
 
   // ── Format preset path ───────────────────────────────────────────────────
@@ -1187,6 +1253,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState(null);
   const [tabFilter, setTabFilter] = useState("");
   const [modal, setModal] = useState(null);
+  const [schemaLowConfidenceNotif, setSchemaLowConfidenceNotif] = useState(null); // { tabId, ts } | null
   const [dragOver, setDragOver] = useState(false);
   const [selectedRows, setSelectedRows] = useState(new Set());
   const [lastClickedRow, setLastClickedRow] = useState(null);
@@ -1679,6 +1746,13 @@ export default function App() {
     return () => ro.disconnect();
   }, [histogramVisible]);
 
+  // Auto-dismiss schema low-confidence toast after 12 seconds
+  useEffect(() => {
+    if (!schemaLowConfidenceNotif) return;
+    const t = setTimeout(() => setSchemaLowConfidenceNotif(null), 12000);
+    return () => clearTimeout(t);
+  }, [schemaLowConfidenceNotif]);
+
   // ── Scroll-driven window fetch (server-side virtual scrolling) ──
   const scrollFetchTimer = useRef(null);
   useEffect(() => {
@@ -1959,6 +2033,7 @@ export default function App() {
         columnFilters: {}, checkboxFilters: {}, sortCol: null, sortDir: "asc", colorRules: [],
         hiddenColumns: new Set(), bookmarkedSet: new Set(), showBookmarkedOnly: false, rowOffset: 0,
         columnWidths: {}, columnOrder: [], pinnedColumns: [], groupByColumns: [], groupData: [], expandedGroups: {},
+        renamedColumns: {}, mergedColumns: [],
         rowTags: {}, tagColors: { ...TAG_PRESETS }, tagFilter: null,
         dateRangeFilters: {}, searchHighlight: false, disabledFilters: new Set(),
         advancedFilters: [],
@@ -1970,7 +2045,7 @@ export default function App() {
     tle.onImportProgress(({ tabId, rowsImported, percent }) => {
       setImportingTabs((prev) => ({ ...prev, [tabId]: { ...(prev[tabId] || { fileName: "", status: "importing" }), rowsImported, percent, status: percent >= 100 ? "indexing" : "importing" } }));
     });
-    tle.onImportComplete(({ tabId, fileName, headers, rowCount, tsColumns, numericColumns, initialRows, totalFiltered, emptyColumns, sourceFormat, resolveStats }) => {
+    tle.onImportComplete(({ tabId, fileName, headers, rowCount, tsColumns, numericColumns, initialRows, totalFiltered, emptyColumns, sourceFormat, resolveStats, detectedSchema }) => {
       const cw = {};
       headers.forEach((h) => {
         const hLen = h.length * 8 + 36;
@@ -2010,7 +2085,8 @@ export default function App() {
           tsColumns: new Set(tsColumns || []), numericColumns: new Set(numericColumns || []),
           columnWidths: saved ? { ...cw, ...saved.columnWidths } : cw, importing: false, dataReady: true, bookmarkedSet: new Set(),
           sourceFormat: sourceFormat || null, detectedTz,
-          usnResolveStats: sourceFormat === "raw-usnjrnl" ? (resolveStats || null) : null };
+          usnResolveStats: sourceFormat === "raw-usnjrnl" ? (resolveStats || null) : null,
+          detectedSchema: detectedSchema || null };
         if (!saved) {
           const autoHidden = new Set(emptyColumns || []);
           // Raw binary parsers (MFT, USN Journal): show all columns, only hide empty
@@ -2044,6 +2120,7 @@ export default function App() {
           colorRules: saved.colorRules || [],
           hiddenColumns: new Set(saved.hiddenColumns || []),
           pinnedColumns: saved.pinnedColumns || [], columnOrder: saved.columnOrder || [],
+          renamedColumns: saved.renamedColumns || {}, mergedColumns: saved.mergedColumns || [],
           sortCol: saved.sortCol, sortDir: saved.sortDir || "asc",
           searchTerm: saved.searchTerm || "", searchMode: saved.searchMode || "mixed", searchCondition: saved.searchCondition || "contains",
           groupByColumns: saved.groupByColumns || [],
@@ -2055,6 +2132,10 @@ export default function App() {
         };
       }));
       setImportingTabs((prev) => { const next = { ...prev }; delete next[tabId]; return next; });
+      // Show Schema Builder toast for unknown schemas (non-blocking)
+      if (!saved && detectedSchema && detectedSchema.schemaId === null && detectedSchema.confidence === 0) {
+        setSchemaLowConfidenceNotif({ tabId, ts: Date.now() });
+      }
       // Restore bookmarks and tags from session
       if (saved) {
         (async () => {
@@ -2392,15 +2473,25 @@ export default function App() {
   // ── Computed headers ─────────────────────────────────────────────
   const allVisH = useMemo(() => {
     if (!ct) return [];
-    const visSet = new Set(ct.headers.filter((h) => !ct.hiddenColumns.has(h)));
+    const mergedDefs = ct.mergedColumns || [];
+    const mergedSourceSet = new Set(mergedDefs.flatMap(m => m.sources));
+    const mergedIdSet = new Set(mergedDefs.map(m => m.id));
+    // Visible real columns: exclude hidden and merged sources
+    const visSet = new Set(ct.headers.filter(h => !ct.hiddenColumns.has(h) && !mergedSourceSet.has(h)));
     if (ct.columnOrder?.length > 0) {
-      const ordered = ct.columnOrder.filter((h) => visSet.has(h));
+      const ordered = [];
+      const addedM = new Set();
+      for (const h of ct.columnOrder) {
+        if (mergedIdSet.has(h)) { if (!addedM.has(h)) { ordered.push(h); addedM.add(h); } }
+        else if (mergedSourceSet.has(h)) { const m = mergedDefs.find(md => md.sources.includes(h) && !addedM.has(md.id)); if (m) { ordered.push(m.id); addedM.add(m.id); } }
+        else if (visSet.has(h)) { ordered.push(h); }
+      }
       const orderSet = new Set(ct.columnOrder);
-      const rest = [...visSet].filter((h) => !orderSet.has(h));
+      const rest = [...visSet].filter(h => !orderSet.has(h));
       return [...ordered, ...rest];
     }
     return [...visSet];
-  }, [ct?.headers, ct?.hiddenColumns, ct?.columnOrder]);
+  }, [ct?.headers, ct?.hiddenColumns, ct?.columnOrder, ct?.mergedColumns]);
 
   const pinnedH = useMemo(() => {
     if (!ct) return [];
@@ -2423,6 +2514,23 @@ export default function App() {
     }
     return { offsets, totalWidth: x };
   }, [pinnedH, ct?.columnWidths, tagColWidth, isGrouped, ct?.vtEnrichment]);
+
+  // Merged column lookup map: id → merge definition
+  const mergedColMap = useMemo(() => {
+    const map = {};
+    for (const m of ct?.mergedColumns || []) map[m.id] = m;
+    return map;
+  }, [ct?.mergedColumns]);
+
+  // Semantic type lookup map: colName → { id, label, color }
+  const colTypeMap = useMemo(() => {
+    const map = {};
+    for (const [typeId, colName] of Object.entries(ct?.columnSemanticTypes || {})) {
+      const def = SEMANTIC_TYPES.find(s => s.id === typeId);
+      if (def) map[colName] = def;
+    }
+    return map;
+  }, [ct?.columnSemanticTypes]);
 
   // ── Grouped items (multi-level) ─────────────────────────────────
   const groupedItems = useMemo(() => {
@@ -3005,6 +3113,660 @@ export default function App() {
     </div>
   );
 
+  // ── Schema Builder Modal ──────────────────────────────────────────────────
+  const SchemaBuilderModal = () => {
+    const headers = modal?.headers || [];
+    const ds = modal?.detectedSchema;
+
+    // ── State ────────────────────────────────────────────────────────────────
+    const [columnAssignments, setColumnAssignments] = useState({});
+    const [customLabels, setCustomLabels] = useState([]);
+    const [newLabelForm, setNewLabelForm] = useState(null); // { label, color } | null
+    const [hiddenCols, setHiddenCols] = useState(() => new Set(ct?.hiddenColumns || []));
+    const [colOrder, setColOrder] = useState(() => ct?.columnOrder?.length ? [...ct.columnOrder] : [...headers]);
+    const [renamedCols, setRenamedCols] = useState({});      // original → display name
+    const [mergedCols, setMergedCols] = useState([]);        // [{ id, name, sources, separator }]
+    const [mergeSelection, setMergeSelection] = useState(new Set());
+    const [mergeDialog, setMergeDialog] = useState(null);    // { name, separator } | null
+    const [previewCount, setPreviewCount] = useState(100);
+    const [colSearch, setColSearch] = useState("");
+    const [colDragSrc, setColDragSrc] = useState(null);
+    const [colDragOver, setColDragOver] = useState(null);
+    const [typeDropOver, setTypeDropOver] = useState(null);  // col name being hovered for type drop
+    const [sbColWidths, setSbColWidths] = useState({});      // preview table column widths
+
+    // Column stats computed once on mount from available rows
+    const colStats = useMemo(() => {
+      const rows = ct?.rows || [];
+      if (!rows.length) return {};
+      const stats = {};
+      for (const col of headers) {
+        let nullCount = 0;
+        const valueCounts = {};
+        for (const row of rows) {
+          const v = row[col];
+          if (!v || v === "") { nullCount++; continue; }
+          valueCounts[v] = (valueCounts[v] || 0) + 1;
+        }
+        const entries = Object.entries(valueCounts);
+        stats[col] = {
+          total: rows.length,
+          nullPct: Math.round(nullCount / rows.length * 100),
+          uniqueCount: entries.length,
+          top3: entries.sort((a, b) => b[1] - a[1]).slice(0, 3).map(([v]) => v.length > 22 ? v.slice(0, 20) + "…" : v),
+        };
+      }
+      return stats;
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const allLabels = [...SEMANTIC_TYPES, ...customLabels];
+    const previewRows = (ct?.rows || []).slice(0, previewCount);
+    const availableRowCounts = [5, 100, 1000, ct?.rows?.length || 0].filter((v, i, a) => v > 0 && a.indexOf(v) === i);
+
+    // Preview table column resize
+    const SB_COL_W = 140;
+    const getSbW = (key) => sbColWidths[key] || SB_COL_W;
+    const startSbResize = (e, key) => {
+      e.preventDefault(); e.stopPropagation();
+      const startX = e.clientX, startW = getSbW(key);
+      const onMove = (ev) => setSbColWidths(p => ({ ...p, [key]: Math.max(60, startW + ev.clientX - startX) }));
+      const onUp   = () => { document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); };
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    };
+
+    // Merged source set for quick lookup
+    const mergedSourceSet = useMemo(() => new Set(mergedCols.flatMap(m => m.sources)), [mergedCols]);
+
+    // Effective ordered column list: original cols (excluding merged sources) + merged cols in place
+    const effectiveOrder = useMemo(() => {
+      const result = [];
+      const addedMerges = new Set();
+      for (const col of colOrder) {
+        if (mergedSourceSet.has(col)) {
+          const merge = mergedCols.find(m => m.sources.includes(col) && !addedMerges.has(m.id));
+          if (merge) { result.push({ type: "merged", ...merge }); addedMerges.add(merge.id); }
+        } else {
+          result.push({ type: "original", name: col });
+        }
+      }
+      return result;
+    }, [colOrder, mergedCols, mergedSourceSet]);
+
+    const filteredOrder = colSearch
+      ? effectiveOrder.filter(c => c.name.toLowerCase().includes(colSearch.toLowerCase()))
+      : effectiveOrder;
+
+    const getDisplayName = (colEntry) =>
+      colEntry.type === "merged" ? colEntry.name : (renamedCols[colEntry.name] || colEntry.name);
+
+    const getCellValue = (colEntry, row) =>
+      colEntry.type === "merged"
+        ? colEntry.sources.map(s => String(row[s] ?? "")).join(colEntry.separator)
+        : String(row[colEntry.name] ?? "");
+
+    // Column reorder DnD
+    const handleColReorderDrop = (e, targetName) => {
+      const src = e.dataTransfer.getData("text/schema-col-reorder");
+      if (!src || src === targetName) return;
+      setColOrder(prev => {
+        const arr = [...prev];
+        const si = arr.indexOf(src);
+        const ti = arr.indexOf(targetName);
+        if (si === -1 || ti === -1) return arr;
+        arr.splice(si, 1);
+        const newTi = arr.indexOf(targetName);
+        arr.splice(newTi, 0, src);
+        return arr;
+      });
+    };
+
+    // Export schema as JSON
+    const saveSchema = () => {
+      const schema = {
+        version: 1,
+        createdAt: new Date().toISOString(),
+        schemaName: ct?.name || "Custom Schema",
+        labels: columnAssignments,
+        customLabels,
+        hiddenColumns: [...hiddenCols],
+        columnOrder: colOrder,
+        renamedColumns: renamedCols,
+        mergedColumns: mergedCols,
+      };
+      const blob = new Blob([JSON.stringify(schema, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${(ct?.name || "schema").replace(/\.[^/.]+$/, "")}_schema.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+
+    // Apply to tab and close
+    const applyAndClose = () => {
+      if (Object.keys(columnAssignments).length > 0) up("columnSemanticTypes", { ...columnAssignments });
+      // Persist renames (only non-empty values)
+      const validRenames = Object.fromEntries(Object.entries(renamedCols).filter(([, v]) => v && v.trim()));
+      if (Object.keys(validRenames).length > 0) up("renamedColumns", validRenames);
+      // Persist merges
+      if (mergedCols.length > 0) up("mergedColumns", mergedCols);
+      // Build final column order: replace merged sources with their merge IDs, drop hidden cols
+      const mSrcSet = new Set(mergedCols.flatMap(m => m.sources));
+      const addedMIds = new Set();
+      const newOrder = [];
+      for (const c of colOrder) {
+        if (hiddenCols.has(c)) continue;
+        if (mSrcSet.has(c)) {
+          const merge = mergedCols.find(m => m.sources.includes(c) && !addedMIds.has(m.id));
+          if (merge) { newOrder.push(merge.id); addedMIds.add(merge.id); }
+        } else {
+          newOrder.push(c);
+        }
+      }
+      // Hide source columns of all merges, plus any explicitly hidden cols
+      const newHidden = new Set([...(ct?.hiddenColumns || []), ...hiddenCols, ...mSrcSet]);
+      if (newHidden.size > 0) up("hiddenColumns", newHidden);
+      if (newOrder.length > 0) up("columnOrder", newOrder);
+      setModal(null);
+    };
+
+    const conf = ds?.confidence || 0;
+    const confColor = conf >= 0.7 ? th.success : conf >= 0.4 ? th.warning : th.textMuted;
+    const labelSummary = [
+      Object.keys(columnAssignments).length > 0 && `${Object.keys(columnAssignments).length} label${Object.keys(columnAssignments).length !== 1 ? "s" : ""}`,
+      hiddenCols.size > 0 && `${hiddenCols.size} hidden`,
+      mergedCols.length > 0 && `${mergedCols.length} merged`,
+      Object.keys(renamedCols).filter(k => renamedCols[k]).length > 0 && `${Object.keys(renamedCols).filter(k => renamedCols[k]).length} renamed`,
+    ].filter(Boolean).join(" · ") || "No changes yet";
+
+    // ── Phase "detect" ────────────────────────────────────────────────────────
+    if (modal?.phase === "detect") {
+      const detectRows = (ct?.rows || []).slice(0, 10);
+      return (
+        <div style={{ position:"fixed", inset:0, background:th.overlay, display:"flex", alignItems:"center", justifyContent:"center", zIndex:100, backdropFilter:"blur(4px)", WebkitAppRegion:"drag" }}>
+          <div style={{ background:th.modalBg, border:`1px solid ${th.modalBorder}`, borderRadius:12, padding:24, width:640, maxWidth:"93vw", maxHeight:"86vh", overflow:"auto", boxShadow:"0 24px 48px rgba(0,0,0,0.5)", WebkitAppRegion:"no-drag", display:"flex", flexDirection:"column", gap:16 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <span style={{ fontSize:14, fontWeight:700, color:th.text, fontFamily:"-apple-system,sans-serif" }}>Schema Detection Result</span>
+              <button onClick={() => setModal(null)} style={{ ...ms.bs, padding:"2px 8px" }}>✕</button>
+            </div>
+            <div style={{ background:`${th.accent}0A`, border:`1px solid ${th.border}`, borderRadius:8, padding:"12px 14px", display:"flex", flexDirection:"column", gap:6 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                <span style={{ fontSize:13, fontWeight:600, color:th.text, fontFamily:"-apple-system,sans-serif" }}>{ds?.label || "Unknown"}</span>
+                {ds?.schemaId && <span style={{ fontSize:10, fontWeight:600, color:confColor, background:`${confColor}1A`, border:`1px solid ${confColor}55`, borderRadius:10, padding:"1px 7px", fontFamily:"-apple-system,sans-serif" }}>{Math.round(conf * 100)}% confidence</span>}
+              </div>
+              {ds?.vendor && <span style={{ fontSize:11, color:th.textMuted, fontFamily:"-apple-system,sans-serif" }}>{ds.vendor}{ds.tool ? ` · ${ds.tool}` : ""}</span>}
+              {!ds?.schemaId && <span style={{ fontSize:11, color:th.textMuted, fontFamily:"-apple-system,sans-serif" }}>Schema not recognised. Use the builder to label columns manually.</span>}
+            </div>
+            {headers.length > 0 && (
+              <div>
+                <div style={{ fontSize:10, fontWeight:600, color:th.textMuted, fontFamily:"-apple-system,sans-serif", marginBottom:6, textTransform:"uppercase", letterSpacing:"0.05em" }}>Sample Data (10 rows)</div>
+                <div style={{ overflow:"auto", borderRadius:6, border:`1px solid ${th.border}` }}>
+                  <table style={{ borderCollapse:"collapse", tableLayout:"auto", fontSize:11, fontFamily:"'SF Mono',Menlo,monospace", minWidth:"100%" }}>
+                    <thead><tr style={{ background:th.headerBg }}>
+                      {headers.map(h => <th key={h} style={{ padding:"5px 8px", textAlign:"left", color:th.headerText, fontWeight:600, borderBottom:`1px solid ${th.border}`, whiteSpace:"nowrap", fontSize:10 }} title={h}>{h.length > 18 ? h.slice(0,16)+"…" : h}</th>)}
+                    </tr></thead>
+                    <tbody>{detectRows.map((row, ri) => (
+                      <tr key={ri} style={{ background: ri % 2 === 0 ? th.rowEven : th.rowOdd }}>
+                        {headers.map(h => { const v = String(row[h] ?? ""); return <td key={h} style={{ padding:"3px 8px", color:th.text, borderBottom:`1px solid ${th.cellBorder}`, whiteSpace:"nowrap", maxWidth:160, overflow:"hidden", textOverflow:"ellipsis" }} title={v}>{v.length > 30 ? v.slice(0,28)+"…" : v}</td>; })}
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+            <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginTop:4 }}>
+              <button onClick={() => setModal(null)} style={ms.bs}>Close</button>
+              <button onClick={() => setModal(p => ({ ...p, phase:"builder" }))} style={ms.bp}>Open Schema Builder →</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ── Phase "builder" ───────────────────────────────────────────────────────
+    return (
+      <div style={{ position:"fixed", inset:0, background:th.overlay, display:"flex", alignItems:"center", justifyContent:"center", zIndex:100, backdropFilter:"blur(4px)", WebkitAppRegion:"drag" }}>
+        <div style={{ background:th.modalBg, border:`1px solid ${th.modalBorder}`, borderRadius:12, width:1080, maxWidth:"98vw", height:"90vh", maxHeight:"90vh", boxShadow:"0 24px 48px rgba(0,0,0,0.5)", WebkitAppRegion:"no-drag", display:"flex", flexDirection:"column", overflow:"hidden" }}>
+
+          {/* ── Top bar ──────────────────────────────────────────────── */}
+          <div style={{ padding:"11px 18px", borderBottom:`1px solid ${th.border}`, display:"flex", alignItems:"center", justifyContent:"space-between", flexShrink:0, gap:10 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              <span style={{ fontSize:14, fontWeight:700, color:th.text, fontFamily:"-apple-system,sans-serif" }}>Schema Builder</span>
+              {ct?.name && <span style={{ fontSize:11, color:th.textMuted, fontFamily:"-apple-system,sans-serif" }}>— {ct.name}</span>}
+            </div>
+            <div style={{ display:"flex", gap:6 }}>
+              <button onClick={() => setModal(p => ({ ...p, phase:"detect" }))} style={ms.bs}>← Detection Result</button>
+              <button onClick={() => setModal(null)} style={{ ...ms.bs, padding:"2px 8px" }}>✕</button>
+            </div>
+          </div>
+
+          {/* ── Semantic type palette ─────────────────────────────────── */}
+          <div style={{ padding:"8px 18px", borderBottom:`1px solid ${th.border}`, display:"flex", flexWrap:"wrap", alignItems:"center", gap:6, flexShrink:0 }}>
+            <span style={{ fontSize:10, fontWeight:600, color:th.textMuted, fontFamily:"-apple-system,sans-serif", textTransform:"uppercase", letterSpacing:"0.05em", marginRight:2 }}>Types:</span>
+            {allLabels.map(st => (
+              <span key={st.id} draggable
+                onDragStart={e => { e.dataTransfer.setData("text/semantic-type", st.id); e.dataTransfer.effectAllowed = "copy"; }}
+                style={{ display:"inline-flex", alignItems:"center", gap:3, padding:"2px 9px", borderRadius:12, background:`${st.color}22`, border:`1px solid ${st.color}66`, color:st.color, fontSize:11, fontWeight:600, fontFamily:"-apple-system,sans-serif", cursor:"grab", userSelect:"none" }}
+              >{st.label}</span>
+            ))}
+            {/* Custom label creator */}
+            {newLabelForm ? (
+              <span style={{ display:"inline-flex", alignItems:"center", gap:5 }}>
+                <input value={newLabelForm.label} onChange={e => setNewLabelForm(p => ({ ...p, label: e.target.value }))}
+                  onKeyDown={e => { if (e.key === "Enter" && newLabelForm.label.trim()) { setCustomLabels(prev => [...prev, { id:`custom_${Date.now()}`, label: newLabelForm.label.trim(), color: newLabelForm.color }]); setNewLabelForm(null); } if (e.key === "Escape") setNewLabelForm(null); }}
+                  placeholder="Label name" autoFocus
+                  style={{ width:100, background:th.bgInput, border:`1px solid ${th.btnBorder}`, borderRadius:5, color:th.text, fontSize:11, padding:"2px 6px", fontFamily:"-apple-system,sans-serif" }} />
+                <input type="color" value={newLabelForm.color} onChange={e => setNewLabelForm(p => ({ ...p, color: e.target.value }))}
+                  style={{ width:24, height:22, padding:1, border:`1px solid ${th.btnBorder}`, borderRadius:4, cursor:"pointer", background:"transparent" }} />
+                <button onClick={() => { if (newLabelForm.label.trim()) setCustomLabels(prev => [...prev, { id:`custom_${Date.now()}`, label: newLabelForm.label.trim(), color: newLabelForm.color }]); setNewLabelForm(null); }} style={{ ...ms.bs, padding:"1px 7px", fontSize:11 }}>Add</button>
+                <button onClick={() => setNewLabelForm(null)} style={{ ...ms.bs, padding:"1px 6px", fontSize:11 }}>✕</button>
+              </span>
+            ) : (
+              <button onClick={() => setNewLabelForm({ label:"", color:"#a78bfa" })} style={{ ...ms.bs, fontSize:11, padding:"2px 9px" }}>+ Custom Label</button>
+            )}
+          </div>
+
+          {/* ── Main body: column list (left) + data preview (right) ─── */}
+          <div style={{ display:"flex", flex:1, overflow:"hidden" }}>
+
+            {/* ── Column list panel ──────────────────────────────────── */}
+            <div style={{ width:340, flexShrink:0, borderRight:`1px solid ${th.border}`, display:"flex", flexDirection:"column", overflow:"hidden" }}>
+
+              {/* Column list toolbar */}
+              <div style={{ padding:"7px 10px", borderBottom:`1px solid ${th.border}`, display:"flex", alignItems:"center", gap:6, flexShrink:0 }}>
+                <input value={colSearch} onChange={e => setColSearch(e.target.value)}
+                  placeholder={`Search ${headers.length} columns…`}
+                  style={{ flex:1, background:th.bgInput, border:`1px solid ${th.btnBorder}`, borderRadius:5, color:th.text, fontSize:11, padding:"3px 8px", fontFamily:"-apple-system,sans-serif" }} />
+                {mergeSelection.size >= 2 && (
+                  <button onClick={() => setMergeDialog({ name:"", separator:" " })}
+                    style={{ ...ms.bs, fontSize:11, padding:"2px 8px", whiteSpace:"nowrap", color:th.accent, borderColor:th.accent }}>
+                    ⊕ Merge {mergeSelection.size}
+                  </button>
+                )}
+              </div>
+
+              {/* Merge dialog */}
+              {mergeDialog && (
+                <div style={{ padding:"10px 12px", background:`${th.accent}08`, borderBottom:`1px solid ${th.border}`, flexShrink:0 }}>
+                  <div style={{ fontSize:11, fontWeight:600, color:th.text, fontFamily:"-apple-system,sans-serif", marginBottom:6 }}>New merged column</div>
+                  <input value={mergeDialog.name} onChange={e => setMergeDialog(p => ({ ...p, name: e.target.value }))}
+                    placeholder="Display name for merged column…" autoFocus
+                    style={{ width:"100%", marginBottom:6, background:th.bgInput, border:`1px solid ${th.btnBorder}`, borderRadius:5, color:th.text, fontSize:11, padding:"3px 8px", fontFamily:"-apple-system,sans-serif", boxSizing:"border-box" }} />
+                  <div style={{ display:"flex", alignItems:"center", gap:5, marginBottom:6, flexWrap:"wrap" }}>
+                    <span style={{ fontSize:10, color:th.textMuted, fontFamily:"-apple-system,sans-serif" }}>Separator:</span>
+                    {[{v:" ",l:"space"},{v:":",l:":"},{v:"|",l:"|"},{v:"-",l:"—"},{v:"\\",l:"\\"},{v:"",l:"none"}].map(({v,l}) => (
+                      <button key={l} onClick={() => setMergeDialog(p => ({ ...p, separator:v }))}
+                        style={{ ...ms.bs, fontSize:10, padding:"1px 6px", background: mergeDialog.separator === v ? `${th.accent}33` : th.btnBg, borderColor: mergeDialog.separator === v ? th.accent : th.btnBorder, color: mergeDialog.separator === v ? th.accent : th.text }}>
+                        {l}
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{ fontSize:10, color:th.textMuted, fontFamily:"-apple-system,sans-serif", marginBottom:8, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                    Sources: {[...mergeSelection].join(" + ")}
+                  </div>
+                  <div style={{ display:"flex", gap:6 }}>
+                    <button onClick={() => { if (!mergeDialog.name.trim()) return; setMergedCols(prev => [...prev, { id:`__m_${Date.now()}`, name: mergeDialog.name.trim(), sources:[...mergeSelection], separator: mergeDialog.separator }]); setMergeSelection(new Set()); setMergeDialog(null); }} style={{ ...ms.bp, fontSize:11 }} disabled={!mergeDialog.name.trim()}>Merge</button>
+                    <button onClick={() => { setMergeSelection(new Set()); setMergeDialog(null); }} style={{ ...ms.bs, fontSize:11 }}>Cancel</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Column items list */}
+              <div style={{ flex:1, overflowY:"auto" }}>
+                {filteredOrder.length === 0 && (
+                  <div style={{ padding:"18px 14px", fontSize:11, color:th.textMuted, fontFamily:"-apple-system,sans-serif", textAlign:"center" }}>No columns match "{colSearch}"</div>
+                )}
+                {filteredOrder.map((colEntry) => {
+                  // ── Merged column row ──
+                  if (colEntry.type === "merged") {
+                    return (
+                      <div key={colEntry.id} style={{ padding:"7px 12px", borderBottom:`1px solid ${th.cellBorder}`, background:`${th.accent}0A` }}>
+                        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:6 }}>
+                          <span style={{ fontSize:11, fontWeight:600, color:th.accent, fontFamily:"-apple-system,sans-serif" }}>⊕ {colEntry.name}</span>
+                          <button onClick={() => setMergedCols(prev => prev.filter(m => m.id !== colEntry.id))} style={{ ...ms.bs, padding:"0 5px", fontSize:10 }}>✕</button>
+                        </div>
+                        <div style={{ fontSize:9, color:th.textMuted, fontFamily:"-apple-system,sans-serif", marginTop:2 }}>
+                          {colEntry.sources.join(` "${colEntry.separator || "∅"}" `)} · sep: "{colEntry.separator || "(none)"}"
+                        </div>
+                        <div style={{ fontSize:9, color:th.textMuted, fontFamily:"-apple-system,sans-serif", marginTop:1, fontStyle:"italic" }}>Preview only — visible in Schema Builder & ETS View</div>
+                      </div>
+                    );
+                  }
+
+                  // ── Original column row ──
+                  const col = colEntry.name;
+                  const assignedEntry = Object.entries(columnAssignments).find(([, c]) => c === col);
+                  const assignedType = assignedEntry ? allLabels.find(s => s.id === assignedEntry[0]) : null;
+                  const isHidden = hiddenCols.has(col);
+                  const isMergeSelected = mergeSelection.has(col);
+                  const isTypeOver = typeDropOver === col;
+                  const isReorderOver = colDragOver === col && colDragSrc !== col;
+                  const stats = colStats[col];
+
+                  return (
+                    <div key={col}
+                      onDragOver={e => {
+                        e.preventDefault();
+                        if (e.dataTransfer.types.includes("text/schema-col-reorder")) { e.dataTransfer.dropEffect = "move"; setColDragOver(col); }
+                        else if (e.dataTransfer.types.includes("text/semantic-type")) { e.dataTransfer.dropEffect = "copy"; setTypeDropOver(col); }
+                      }}
+                      onDragLeave={() => { setColDragOver(p => p === col ? null : p); setTypeDropOver(p => p === col ? null : p); }}
+                      onDrop={e => {
+                        e.preventDefault();
+                        setTypeDropOver(null); setColDragOver(null); setColDragSrc(null);
+                        const typeId = e.dataTransfer.getData("text/semantic-type");
+                        if (typeId) { setColumnAssignments(prev => ({ ...prev, [typeId]: col })); return; }
+                        handleColReorderDrop(e, col);
+                      }}
+                      style={{ padding:"7px 12px", borderBottom:`1px solid ${th.cellBorder}`, borderLeft: isReorderOver ? `3px solid ${th.accent}` : "3px solid transparent", background: isTypeOver ? `${th.accent}18` : isHidden ? `${th.bgAlt}66` : "transparent", opacity: isHidden ? 0.55 : 1, cursor:"default", transition:"border-color 0.1s, background 0.1s" }}
+                    >
+                      <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                        {/* Drag handle — only this element triggers reorder drag */}
+                        <span
+                          draggable
+                          onDragStart={e => { e.dataTransfer.setData("text/schema-col-reorder", col); e.dataTransfer.effectAllowed = "move"; setColDragSrc(col); }}
+                          onDragEnd={() => { setColDragSrc(null); setColDragOver(null); }}
+                          style={{ color:th.textMuted, fontSize:14, flexShrink:0, cursor:"grab", lineHeight:1, padding:"0 3px", userSelect:"none" }} title="Drag to reorder">⠿</span>
+                        {/* Merge select checkbox */}
+                        <input type="checkbox" checked={isMergeSelected} title="Select for merge"
+                          onChange={e => setMergeSelection(prev => { const n = new Set(prev); e.target.checked ? n.add(col) : n.delete(col); return n; })}
+                          onClick={e => e.stopPropagation()}
+                          style={{ flexShrink:0, cursor:"pointer", accentColor:th.accent, width:14, height:14, margin:"0 2px" }} />
+                        {/* Hide/show toggle */}
+                        <button onClick={e => { e.stopPropagation(); setHiddenCols(prev => { const n = new Set(prev); isHidden ? n.delete(col) : n.add(col); return n; }); }}
+                          title={isHidden ? "Show column" : "Hide column"}
+                          style={{ background:"transparent", border:"none", cursor:"pointer", padding:"0 3px", fontSize:13, color: isHidden ? th.textMuted : th.text, flexShrink:0, lineHeight:1 }}>
+                          {isHidden ? "○" : "●"}
+                        </button>
+                        {/* Column name */}
+                        <div style={{ flex:1, minWidth:0 }}>
+                          <div style={{ fontSize:11, fontWeight:600, color: isHidden ? th.textMuted : th.text, fontFamily:"-apple-system,sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }} title={col}>
+                            {renamedCols[col] ? (
+                              <><span style={{ color:th.textMuted, textDecoration:"line-through", fontSize:10, marginRight:4 }}>{col.length > 14 ? col.slice(0,12)+"…" : col}</span><span>{renamedCols[col]}</span></>
+                            ) : col}
+                          </div>
+                        </div>
+                        {/* Assigned type pill */}
+                        {assignedType && (
+                          <span onClick={e => { e.stopPropagation(); setColumnAssignments(prev => { const n = {...prev}; delete n[assignedType.id]; return n; }); }}
+                            title="Click to remove label"
+                            style={{ fontSize:9, fontWeight:700, color:assignedType.color, background:`${assignedType.color}22`, borderRadius:8, padding:"1px 5px", cursor:"pointer", flexShrink:0, border:`1px solid ${assignedType.color}44`, whiteSpace:"nowrap" }}>
+                            {assignedType.label} ✕
+                          </span>
+                        )}
+                      </div>
+                      {/* Rename input */}
+                      <input value={renamedCols[col] || ""} draggable={false}
+                        onChange={e => setRenamedCols(prev => ({ ...prev, [col]: e.target.value }))}
+                        onMouseDown={e => e.stopPropagation()}
+                        onClick={e => e.stopPropagation()}
+                        placeholder={`Rename "${col.length > 20 ? col.slice(0,18)+"…" : col}"…`}
+                        style={{ marginTop:4, width:"100%", background:"transparent", border:"none", borderBottom:`1px dashed ${th.btnBorder}`, color:th.textMuted, fontSize:10, padding:"1px 2px", fontFamily:"-apple-system,sans-serif", outline:"none", boxSizing:"border-box" }} />
+                      {/* Column stats */}
+                      {stats && (
+                        <div style={{ marginTop:3, fontSize:9, color:th.textMuted, fontFamily:"-apple-system,sans-serif", display:"flex", gap:8, flexWrap:"wrap" }}>
+                          <span title="Unique values">{stats.uniqueCount.toLocaleString()} unique</span>
+                          <span title="Empty cells">{stats.nullPct}% empty</span>
+                          {stats.top3.length > 0 && <span title="Most common values" style={{ color:th.textDim }}>e.g. {stats.top3[0]}</span>}
+                        </div>
+                      )}
+                      {/* Drop hint when hovering with a type pill */}
+                      {isTypeOver && <div style={{ marginTop:2, fontSize:9, color:th.accent, fontFamily:"-apple-system,sans-serif", fontWeight:600 }}>↓ Drop to assign label</div>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* ── Data preview panel ────────────────────────────────── */}
+            <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden" }}>
+              {/* Preview toolbar */}
+              <div style={{ padding:"6px 12px", borderBottom:`1px solid ${th.border}`, display:"flex", alignItems:"center", gap:8, flexShrink:0, flexWrap:"wrap" }}>
+                <span style={{ fontSize:11, color:th.textMuted, fontFamily:"-apple-system,sans-serif" }}>Preview:</span>
+                {availableRowCounts.map(n => (
+                  <button key={n} onClick={() => setPreviewCount(n)}
+                    style={{ ...ms.bs, fontSize:10, padding:"2px 8px", background: previewCount === n ? `${th.accent}33` : th.btnBg, borderColor: previewCount === n ? th.accent : th.btnBorder, color: previewCount === n ? th.accent : th.text }}>
+                    {n === (ct?.rows?.length || 0) ? `All (${n.toLocaleString()})` : n.toLocaleString()}
+                  </button>
+                ))}
+                <span style={{ fontSize:10, color:th.textMuted, fontFamily:"-apple-system,sans-serif" }}>
+                  {Math.min(previewCount, previewRows.length).toLocaleString()} rows · {effectiveOrder.filter(c => !hiddenCols.has(c.type === "original" ? c.name : "")).length} columns visible
+                </span>
+              </div>
+              {/* Preview table */}
+              <div style={{ flex:1, overflow:"auto" }}>
+                <table style={{ borderCollapse:"collapse", tableLayout:"fixed", fontSize:11, fontFamily:"'SF Mono',Menlo,monospace" }}>
+                  <thead>
+                    <tr style={{ background:th.headerBg, position:"sticky", top:0, zIndex:2 }}>
+                      {effectiveOrder.filter(c => !hiddenCols.has(c.type === "original" ? c.name : "")).map(colEntry => {
+                        const colKey = colEntry.type === "merged" ? colEntry.id : colEntry.name;
+                        const w = getSbW(colKey);
+                        const displayName = getDisplayName(colEntry);
+                        const assignedEntry = colEntry.type === "original" ? Object.entries(columnAssignments).find(([, c]) => c === colEntry.name) : null;
+                        const assignedType = assignedEntry ? allLabels.find(s => s.id === assignedEntry[0]) : null;
+                        return (
+                          <th key={colKey}
+                            style={{ width:w, minWidth:w, padding:"5px 8px", textAlign:"left", color: assignedType ? assignedType.color : colEntry.type === "merged" ? th.accent : th.headerText, fontWeight:600, borderBottom:`1px solid ${th.border}`, borderRight:`1px solid ${th.border}`, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", fontSize:10, position:"relative", userSelect:"none" }}
+                            title={colEntry.type === "merged" ? `Merged: ${colEntry.sources.join(", ")}` : colEntry.name}
+                          >
+                            {displayName.length > 18 ? displayName.slice(0,16)+"…" : displayName}
+                            {colEntry.type === "merged" && <span style={{ fontSize:8, marginLeft:3, opacity:0.6 }}>⊕</span>}
+                            {assignedType && <span style={{ fontSize:8, marginLeft:3, color:assignedType.color }}>●</span>}
+                            <div onMouseDown={(e) => startSbResize(e, colKey)}
+                              style={{ position:"absolute", right:0, top:0, bottom:0, width:5, cursor:"col-resize", background:"transparent", zIndex:1 }} />
+                          </th>
+                        );
+                      })}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {previewRows.map((row, ri) => (
+                      <tr key={ri} style={{ background: ri % 2 === 0 ? th.rowEven : th.rowOdd }}>
+                        {effectiveOrder.filter(c => !hiddenCols.has(c.type === "original" ? c.name : "")).map(colEntry => {
+                          const colKey = colEntry.type === "merged" ? colEntry.id : colEntry.name;
+                          const w = getSbW(colKey);
+                          const v = getCellValue(colEntry, row);
+                          return (
+                            <td key={colKey}
+                              style={{ width:w, maxWidth:w, padding:"3px 8px", color:th.text, borderBottom:`1px solid ${th.cellBorder}`, borderRight:`1px solid ${th.cellBorder}`, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}
+                              title={v}
+                            >{v}</td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          {/* ── Footer ────────────────────────────────────────────────── */}
+          <div style={{ padding:"10px 18px", borderTop:`1px solid ${th.border}`, display:"flex", alignItems:"center", justifyContent:"space-between", flexShrink:0, gap:10 }}>
+            <div style={{ display:"flex", gap:8 }}>
+              <button onClick={() => setModal(null)} style={ms.bs}>Cancel</button>
+              <button onClick={saveSchema} style={ms.bs} title="Export schema definition as JSON for reuse">💾 Save Schema</button>
+            </div>
+            <span style={{ fontSize:11, color:th.textMuted, fontFamily:"-apple-system,sans-serif", textAlign:"center", flex:1 }}>{labelSummary}</span>
+            <button onClick={applyAndClose} style={ms.bp} title="Apply labels, column order and visibility to this tab">Apply & Close</button>
+          </div>
+
+        </div>
+      </div>
+    );
+  };
+
+  // ── ES|QL Query Modal ───────────────────────────────────────────────
+  const EsqlModal = () => {
+    const [settings,   setSettings]   = useState(null);
+    const [urlInput,   setUrlInput]   = useState("http://localhost:9200");
+    const [keyInput,   setKeyInput]   = useState("");
+    const [editingKey, setEditingKey] = useState(false);
+    const [queryName,  setQueryName]  = useState("");
+    const [query,      setQuery]      = useState("");
+    const [running,    setRunning]    = useState(false);
+    const [error,      setError]      = useState(null);
+    const [saving,     setSaving]     = useState(false);
+
+    useEffect(() => {
+      tle.esqlGetSettings().then(s => { setSettings(s); setUrlInput(s.url); });
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const refreshSettings = () => tle.esqlGetSettings().then(s => { setSettings(s); setUrlInput(s.url); });
+
+    const saveKey = async () => {
+      if (!keyInput.trim()) return;
+      setSaving(true);
+      await tle.esqlSetSettings(keyInput.trim(), urlInput);
+      setKeyInput(""); setEditingKey(false);
+      await refreshSettings();
+      setSaving(false);
+    };
+
+    const clearKey = async () => {
+      await tle.esqlSetSettings("", undefined);
+      await refreshSettings();
+    };
+
+    const saveUrl = async () => {
+      await tle.esqlSetSettings(undefined, urlInput);
+    };
+
+    const runQuery = async () => {
+      if (!query.trim() || running) return;
+      setRunning(true); setError(null);
+      const tabId = "tab_esql_" + Date.now();
+      const result = await tle.esqlRunQuery(tabId, query.trim(), queryName.trim());
+      setRunning(false);
+      if (result.success) { setModal(null); }
+      else { setError(result.error || "Unknown error"); }
+    };
+
+    const overlayStyle = { position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)", zIndex:200, display:"flex", alignItems:"center", justifyContent:"center" };
+    const boxStyle = { background:th.modalBg, border:`1px solid ${th.modalBorder}`, borderRadius:14, boxShadow:"0 20px 60px rgba(0,0,0,0.5)", width:560, maxWidth:"calc(100vw - 32px)", display:"flex", flexDirection:"column", overflow:"hidden" };
+    const sectionLabel = { fontSize:10, fontWeight:700, letterSpacing:"0.08em", color:th.textMuted, textTransform:"uppercase", fontFamily:"-apple-system,sans-serif", marginBottom:6 };
+    const inp = { ...ms.bs, width:"100%", boxSizing:"border-box", fontFamily:"-apple-system,sans-serif", fontSize:12, padding:"6px 10px", background:th.bgInput, color:th.text, border:`1px solid ${th.btnBorder}` };
+
+    return (
+      <div style={overlayStyle} onClick={() => !running && setModal(null)}>
+        <div style={boxStyle} onClick={e => e.stopPropagation()}>
+          {/* Header */}
+          <div style={{ padding:"14px 18px 12px", borderBottom:`1px solid ${th.border}`, display:"flex", alignItems:"center", justifyContent:"space-between", flexShrink:0 }}>
+            <span style={{ fontSize:14, fontWeight:700, color:th.text, fontFamily:"-apple-system,sans-serif", display:"flex", alignItems:"center", gap:8 }}>
+              <span style={{ fontSize:16 }}>⚡</span> Elasticsearch ES|QL
+            </span>
+            <button onClick={() => !running && setModal(null)} style={{ ...ms.bs, padding:"2px 8px", fontSize:12, opacity:0.7 }}>✕</button>
+          </div>
+
+          {/* Body */}
+          <div style={{ padding:"16px 18px", display:"flex", flexDirection:"column", gap:16, overflowY:"auto" }}>
+
+            {/* URL */}
+            <div>
+              <div style={sectionLabel}>Elasticsearch URL</div>
+              <input
+                value={urlInput}
+                onChange={e => setUrlInput(e.target.value)}
+                onBlur={saveUrl}
+                placeholder="http://localhost:9200"
+                style={inp}
+                spellCheck={false}
+              />
+            </div>
+
+            {/* API Key */}
+            <div>
+              <div style={sectionLabel}>API Key</div>
+              {settings === null ? (
+                <span style={{ fontSize:11, color:th.textMuted, fontFamily:"-apple-system,sans-serif" }}>Loading…</span>
+              ) : settings.hasKey && !editingKey ? (
+                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                  <span style={{ fontSize:11, fontFamily:"'SF Mono',Menlo,monospace", color:th.textDim, background:th.bgInput, border:`1px solid ${th.btnBorder}`, borderRadius:6, padding:"5px 10px", flex:1 }}>
+                    ●●●●●●●  {settings.maskedKey}
+                  </span>
+                  <button onClick={() => setEditingKey(true)} style={{ ...ms.bs, fontSize:11, padding:"3px 10px" }}>Change</button>
+                  <button onClick={clearKey} style={{ ...ms.bs, fontSize:11, padding:"3px 10px", color:th.danger, borderColor:th.danger }}>Clear</button>
+                </div>
+              ) : (
+                <div style={{ display:"flex", gap:8 }}>
+                  <input
+                    type="password"
+                    value={keyInput}
+                    onChange={e => setKeyInput(e.target.value)}
+                    onKeyDown={e => e.key === "Enter" && saveKey()}
+                    placeholder="Paste your Elasticsearch API key…"
+                    style={{ ...inp, flex:1 }}
+                    autoFocus
+                    spellCheck={false}
+                  />
+                  <button onClick={saveKey} disabled={!keyInput.trim() || saving} style={{ ...ms.bp, fontSize:11, padding:"3px 12px" }}>
+                    {saving ? "Saving…" : "Save"}
+                  </button>
+                  {settings?.hasKey && (
+                    <button onClick={() => { setEditingKey(false); setKeyInput(""); }} style={{ ...ms.bs, fontSize:11, padding:"3px 10px" }}>Cancel</button>
+                  )}
+                </div>
+              )}
+              <div style={{ marginTop:5, fontSize:10, color:th.textMuted, fontFamily:"-apple-system,sans-serif" }}>
+                Format: <code style={{ color:th.accent }}>Authorization: ApiKey &lt;key&gt;</code> — Base64-encoded id:api_key
+              </div>
+            </div>
+
+            {/* Query Name */}
+            <div>
+              <div style={sectionLabel}>Query Name <span style={{ fontWeight:400, textTransform:"none", letterSpacing:0 }}>(optional)</span></div>
+              <input
+                value={queryName}
+                onChange={e => setQueryName(e.target.value)}
+                placeholder="e.g. Login failures last 24h"
+                style={inp}
+                spellCheck={false}
+              />
+            </div>
+
+            {/* Query */}
+            <div>
+              <div style={sectionLabel}>ES|QL Query</div>
+              <textarea
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) runQuery(); }}
+                placeholder={"FROM logs-* | WHERE host.name == \"web-01\"\n| KEEP @timestamp, host.name, message\n| LIMIT 500"}
+                rows={6}
+                style={{ ...inp, resize:"vertical", lineHeight:1.6, fontFamily:"'SF Mono',Menlo,monospace" }}
+                spellCheck={false}
+              />
+              <div style={{ marginTop:4, fontSize:10, color:th.textMuted, fontFamily:"-apple-system,sans-serif" }}>
+                Use <code style={{ color:th.accent }}>| LIMIT N</code> in your query to control result size · ⌘↵ to run
+              </div>
+            </div>
+
+            {/* Error */}
+            {error && (
+              <div style={{ background:`${th.danger}1A`, border:`1px solid ${th.danger}55`, borderRadius:8, padding:"8px 12px", fontSize:11, color:th.danger, fontFamily:"-apple-system,sans-serif", wordBreak:"break-word" }}>
+                ⚠ {error}
+              </div>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div style={{ padding:"10px 18px", borderTop:`1px solid ${th.border}`, display:"flex", alignItems:"center", justifyContent:"space-between", flexShrink:0 }}>
+            <button onClick={() => setModal(null)} disabled={running} style={ms.bs}>Cancel</button>
+            <button
+              onClick={runQuery}
+              disabled={!query.trim() || running || !settings?.hasKey}
+              style={{ ...ms.bp, display:"flex", alignItems:"center", gap:6 }}
+              title={!settings?.hasKey ? "Configure an API key first" : "Run query (⌘↵)"}
+            >
+              {running ? <><span style={{ display:"inline-block", width:12, height:12, border:"2px solid currentColor", borderTopColor:"transparent", borderRadius:"50%", animation:"spin 0.7s linear infinite" }} /> Running…</> : "▶ Run Query"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const ColorModal = () => {
     const [col, setCol] = useState(ct?.headers[0] || "");
     const [cond, setCond] = useState("contains");
@@ -3296,6 +4058,7 @@ export default function App() {
                 {[
                   { label: "Open", shortcut: "⌘O", action: () => tle?.openFileDialog() },
                   { label: "Export", shortcut: "⌘E", action: handleExport, disabled: !ct?.dataReady },
+                  { label: "Elasticsearch", action: () => { setFileMenuOpen(false); setModal({ type: "esql" }); } },
                   { type: "separator" },
                   { label: "Save Session", shortcut: "⌘S", action: handleSaveSession, disabled: tabs.length === 0 },
                   { label: "Load Session", shortcut: "⇧⌘O", action: handleLoadSession },
@@ -3673,7 +4436,8 @@ export default function App() {
                       { label: "USN Journal Analysis", icon: ic(<><rect x="3" y="3" width="18" height="18" rx="2" fill={(th.accent || "#58a6ff") + "14"}/><path d="M7 7h10M7 11h10M7 15h6"/><circle cx="17" cy="15" r="2" fill={th.warning || "#d29922"} stroke="none" opacity="0.7"/></>), action: () => { if (ct?.dataReady) setModal({ type: "usnAnalysis", phase: "input", startTime: "", endTime: "", pathFilter: "", analyses: { renames: true, deletions: true, creations: true, exfil: true, execution: true, persistence: true, suspiciousPaths: true, securityChanges: true, dataOverwrite: true, streamChanges: true, closePatterns: true }, data: null, loading: false, error: null, mftTabId: null, usnExpanded: { renames: true, deletions: true, creations: true, exfil: true, execution: true, persistence: true, suspiciousPaths: true, securityChanges: true, dataOverwrite: true, streamChanges: true, closePatterns: true }, usnIncidentsExpanded: false, usnTimelineExpanded: false, usnLikelyFindingsExpanded: false, usnShowSuppressed: {}, usnSelected: {}, usnSort: {}, usnColWidths: {}, usnCheckboxFilters: {}, usnScopeDir: "", usnSiblingDir: "", usnFocusEntry: "", usnTimelineIncident: "", usnTimelineLimit: 120 }); setUsnFd(null); }, disabled: !ct?.dataReady || ct?.sourceFormat !== "raw-usnjrnl" },
                     ] },
                     { section: "Custom" },
-                    { label: "ETS View", icon: ic(<><rect x="3" y="3" width="18" height="5" rx="1"/><rect x="3" y="10" width="18" height="3" rx="1"/><rect x="3" y="15" width="14" height="3" rx="1"/></>), action: () => { if (!ct?.headers?.length) return; setModal({ type: "ets", phase: "mapping", mapping: matchColumnsToETS(ct.headers, ct.sourceFormat), allHeaders: ct.headers, dateAdded: new Date().toISOString().slice(0, 10) }); }, disabled: !ct?.dataReady },
+                    { label: "ETS View", icon: ic(<><rect x="3" y="3" width="18" height="5" rx="1"/><rect x="3" y="10" width="18" height="3" rx="1"/><rect x="3" y="15" width="14" height="3" rx="1"/></>), action: () => { if (!ct?.headers?.length) return; setModal({ type: "ets", phase: "mapping", mapping: matchColumnsToETS(ct.headers, ct.sourceFormat, ct.columnSemanticTypes), allHeaders: ct.headers, dateAdded: new Date().toISOString().slice(0, 10) }); }, disabled: !ct?.dataReady },
+                    { label: "Schema Builder", icon: ic(<><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></>), action: () => { if (!ct?.dataReady) return; setModal({ type:"schemaBuilder", phase:"detect", detectedSchema: ct.detectedSchema || null, headers: ct.headers, sampleRows: (ct.rows || []).slice(0, 5) }); }, disabled: !ct?.dataReady },
                     { section: "Export" },
                     { label: "Generate Report", icon: ic(<><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></>, th.success || "#3fb950"), action: async () => { if (ct?.dataReady) await tle.generateReport(ct.id, ct.name, ct.tagColors || {}, ct.vtEnrichment || null); }, disabled: !ct?.dataReady },
                   ];
@@ -4324,7 +5088,11 @@ export default function App() {
                     onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenu({ x: e.clientX, y: e.clientY, colName: h }); }}
                     style={{ display: "flex", alignItems: "center", height: HEADER_HEIGHT, width: gw(h), minWidth: gw(h), boxSizing: "border-box", padding: "0 8px", cursor: "pointer", userSelect: "none", fontWeight: 600, color: th.headerText, fontSize: 11, borderRight: h === pinnedH[pinnedH.length - 1] ? `2px solid ${th.borderAccent}` : `1px solid ${th.border}`, position: "sticky", left: pinnedOffsets.offsets[h], zIndex: 12, background: headerDragOver === h ? th.selection : th.headerBg, overflow: "hidden" }}>
                     <span onClick={(e) => { e.stopPropagation(); unpinColumn(h); }} style={{ fontSize: 8, marginRight: 3, cursor: "pointer", opacity: 0.7, flexShrink: 0 }} title="Unpin">📌</span>
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{h}</span>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
+                      {mergedColMap[h]?.name ?? ct?.renamedColumns?.[h] ?? h}
+                      {mergedColMap[h] && <span style={{ fontSize: 8, marginLeft: 3, opacity: 0.65 }}>⊕</span>}
+                      {colTypeMap[h] && <span style={{ fontSize: 8, marginLeft: 3, color: colTypeMap[h].color, fontWeight: 700 }}>●</span>}
+                    </span>
                     {ct.tsColumns.has(h) && <span style={{ fontSize: 8, marginRight: 2, opacity: 0.7 }}>⏱</span>}
                     {ct.sortCol === h && <span style={{ fontSize: 9, color: th.accent, marginLeft: 3 }}>{ct.sortDir === "asc" ? "▲" : "▼"}</span>}
                     <div onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setResizingCol(h); setResizeX(e.clientX); setResizeW(gw(h)); }}
@@ -4342,7 +5110,11 @@ export default function App() {
                     onDoubleClick={() => handleHeaderDblClick(h)}
                     onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setContextMenu({ x: e.clientX, y: e.clientY, colName: h }); }}
                     style={{ display: "flex", alignItems: "center", height: HEADER_HEIGHT, width: gw(h), minWidth: gw(h), boxSizing: "border-box", padding: "0 8px", cursor: "pointer", userSelect: "none", fontWeight: 600, color: th.headerText, fontSize: 11, borderRight: `1px solid ${th.border}`, position: "relative", overflow: "hidden", background: headerDragOver === h ? th.selection : undefined }}>
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{h}</span>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
+                      {mergedColMap[h]?.name ?? ct?.renamedColumns?.[h] ?? h}
+                      {mergedColMap[h] && <span style={{ fontSize: 8, marginLeft: 3, opacity: 0.65 }}>⊕</span>}
+                      {colTypeMap[h] && <span style={{ fontSize: 8, marginLeft: 3, color: colTypeMap[h].color, fontWeight: 700 }}>●</span>}
+                    </span>
                     {ct.tsColumns.has(h) && <span style={{ fontSize: 8, marginRight: 2, opacity: 0.7 }}>⏱</span>}
                     {ct.sortCol === h && <span style={{ fontSize: 9, color: th.accent, marginLeft: 3 }}>{ct.sortDir === "asc" ? "▲" : "▼"}</span>}
                     <div onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setResizingCol(h); setResizeX(e.clientX); setResizeW(gw(h)); }}
@@ -4391,6 +5163,11 @@ export default function App() {
                 })()}
                 {/* Pinned filter cells */}
                 {pinnedH.map((h) => {
+                  if (mergedColMap[h]) return (
+                    <div key={h} style={{ width: gw(h), minWidth: gw(h), boxSizing: "border-box", padding: "0 8px", display: "flex", alignItems: "center", height: FILTER_HEIGHT, borderRight: h === pinnedH[pinnedH.length - 1] ? `2px solid ${th.borderAccent}` : `1px solid ${th.border}`, position: "sticky", left: pinnedOffsets.offsets[h], zIndex: 11, background: th.bg }}>
+                      <span style={{ fontSize: 9, color: th.textMuted, fontStyle: "italic", flex: 1 }}>merged</span>
+                    </div>
+                  );
                   const hasCbf = ct.checkboxFilters?.[h]?.length > 0;
                   const isTs = ct.tsColumns?.has(h);
                   const hasDr = ct.dateRangeFilters?.[h];
@@ -4411,6 +5188,11 @@ export default function App() {
                 })}
                 {/* Scrollable filter cells */}
                 {scrollH.map((h) => {
+                  if (mergedColMap[h]) return (
+                    <div key={h} style={{ width: gw(h), minWidth: gw(h), boxSizing: "border-box", padding: "0 8px", display: "flex", alignItems: "center", height: FILTER_HEIGHT, borderRight: `1px solid ${th.border}` }}>
+                      <span style={{ fontSize: 9, color: th.textMuted, fontStyle: "italic", flex: 1 }}>merged</span>
+                    </div>
+                  );
                   const hasCbf = ct.checkboxFilters?.[h]?.length > 0;
                   const isTs = ct.tsColumns?.has(h);
                   const hasDr = ct.dateRangeFilters?.[h];
@@ -4556,23 +5338,23 @@ export default function App() {
                         );
                       })()}
                       {/* Pinned data cells */}
-                      {pinnedH.map((h) => (
-                        <div key={h} data-cell-col={h} onDoubleClick={() => setCellPopup({ column: h, value: row[h] || "" })} title={fmtCell(h, row[h])}
-                          onClick={(e) => { if (e.metaKey || e.ctrlKey) { e.stopPropagation(); setCellContextMenu({ x: e.clientX, y: e.clientY, colName: h, cellValue: row[h] || "" }); } }}
-                          onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setRowContextMenu({ x: e.clientX, y: e.clientY, rowId: row.__idx, rowIndex: ai, currentTags: rTags, row, cellColumn: h, cellValue: row[h] || "" }); }}
+                      {pinnedH.map((h) => { const _mc = mergedColMap[h]; const _cv = _mc ? _mc.sources.map(s => String(row[s] ?? "")).join(_mc.separator) : row[h]; return (
+                        <div key={h} data-cell-col={h} onDoubleClick={() => setCellPopup({ column: h, value: _cv || "" })} title={fmtCell(h, _cv)}
+                          onClick={(e) => { if (e.metaKey || e.ctrlKey) { e.stopPropagation(); setCellContextMenu({ x: e.clientX, y: e.clientY, colName: h, cellValue: _cv || "" }); } }}
+                          onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setRowContextMenu({ x: e.clientX, y: e.clientY, rowId: row.__idx, rowIndex: ai, currentTags: rTags, row, cellColumn: h, cellValue: _cv || "" }); }}
                           style={{ width: gw(h), minWidth: gw(h), boxSizing: "border-box", padding: "0 8px", display: "flex", alignItems: "center", overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis", borderRight: h === pinnedH[pinnedH.length - 1] ? `2px solid ${th.borderAccent}44` : `1px solid ${th.cellBorder}`, fontSize: fontSize - 0.5, position: "sticky", left: pinnedOffsets.offsets[h], zIndex: 2, background: stickyBase, boxShadow: stickyOverlay }}>
-                          {renderCell(h, row[h])}
+                          {renderCell(h, _cv)}
                         </div>
-                      ))}
+                      ); })}
                       {/* Scrollable data cells */}
-                      {scrollH.map((h) => (
-                        <div key={h} data-cell-col={h} onDoubleClick={() => setCellPopup({ column: h, value: row[h] || "" })} title={fmtCell(h, row[h])}
-                          onClick={(e) => { if (e.metaKey || e.ctrlKey) { e.stopPropagation(); setCellContextMenu({ x: e.clientX, y: e.clientY, colName: h, cellValue: row[h] || "" }); } }}
-                          onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setRowContextMenu({ x: e.clientX, y: e.clientY, rowId: row.__idx, rowIndex: ai, currentTags: rTags, row, cellColumn: h, cellValue: row[h] || "" }); }}
+                      {scrollH.map((h) => { const _mc = mergedColMap[h]; const _cv = _mc ? _mc.sources.map(s => String(row[s] ?? "")).join(_mc.separator) : row[h]; return (
+                        <div key={h} data-cell-col={h} onDoubleClick={() => setCellPopup({ column: h, value: _cv || "" })} title={fmtCell(h, _cv)}
+                          onClick={(e) => { if (e.metaKey || e.ctrlKey) { e.stopPropagation(); setCellContextMenu({ x: e.clientX, y: e.clientY, colName: h, cellValue: _cv || "" }); } }}
+                          onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setRowContextMenu({ x: e.clientX, y: e.clientY, rowId: row.__idx, rowIndex: ai, currentTags: rTags, row, cellColumn: h, cellValue: _cv || "" }); }}
                           style={{ width: gw(h), minWidth: gw(h), boxSizing: "border-box", padding: "0 8px", display: "flex", alignItems: "center", overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis", borderRight: `1px solid ${th.cellBorder}`, fontSize: fontSize - 0.5 }}>
-                          {renderCell(h, row[h])}
+                          {renderCell(h, _cv)}
                         </div>
-                      ))}
+                      ); })}
                     </div>
                   );
                 })}
@@ -4655,6 +5437,18 @@ export default function App() {
             {ct.searchHighlight && ct.searchTerm && <span style={{ color: th.warning }}>Highlight mode</span>}
             {ct.iocHighlights?.length > 0 && <span onClick={() => up("iocHighlights", null)} style={{ color: "#f0883e", cursor: "pointer" }} title="IOC matches are highlighted — click to clear">IOC Highlights ({ct.iocHighlights.length}) ✕</span>}
             {ct._detectedProfile && <span style={{ color: th.success }}>{ct._detectedProfile}</span>}
+            {ct.detectedSchema?.schemaId && ct.dataReady && (() => {
+              const conf = ct.detectedSchema.confidence || 0;
+              const badgeColor = conf >= 0.7 ? th.success : conf >= 0.4 ? th.warning : th.textMuted;
+              return (
+                <span
+                  title={`Detected: ${ct.detectedSchema.label}${ct.detectedSchema.tool ? ` via ${ct.detectedSchema.tool}` : ""} — ${Math.round(conf * 100)}% confidence`}
+                  style={{ display:"inline-flex", alignItems:"center", gap:4, padding:"1px 7px", borderRadius:10, background:`${badgeColor}1A`, border:`1px solid ${badgeColor}55`, color:badgeColor, fontSize:10, fontWeight:600, fontFamily:"-apple-system,sans-serif", letterSpacing:"0.02em", cursor:"default", userSelect:"none" }}
+                >
+                  {ct.detectedSchema.label}
+                </span>
+              );
+            })()}
             {totalActiveFilters > 0 && <span onClick={clearAllFilters} style={{ cursor: "pointer", color: th.danger || "#f85149", fontWeight: 600, textDecoration: "underline", textDecorationStyle: "dotted" }} title={`Clear all ${totalActiveFilters} active filter${totalActiveFilters > 1 ? "s" : ""}`}>Clear All ({totalActiveFilters})</span>}
             <span onClick={() => { if (ct?.dataReady) setModal({ type: "editFilter" }); }} style={{ cursor: ct?.dataReady ? "pointer" : "default", color: ct?.advancedFilters?.length > 0 ? th.accent : th.textMuted, textDecoration: ct?.dataReady ? "underline" : "none" }}>Edit Filter</span>
             <span style={{ color: th.textMuted }}>SQLite-backed</span>
@@ -5405,6 +6199,37 @@ export default function App() {
         </Overlay>
       )}
 
+      {/* Schema Builder modal */}
+      {modal?.type === "schemaBuilder" && ct && <SchemaBuilderModal />}
+      {modal?.type === "esql" && <EsqlModal />}
+
+      {/* Schema low-confidence toast notification */}
+      {schemaLowConfidenceNotif?.tabId === activeTab && (() => {
+        const targetTab = tabs.find(t => t.id === schemaLowConfidenceNotif.tabId);
+        if (!targetTab?.dataReady) return null;
+        return (
+          <div style={{ position:"fixed", right:18, bottom:18, width:320, maxWidth:"calc(100vw - 32px)", background:`linear-gradient(160deg, ${th.modalBg}, ${th.panelBg})`, border:`1px solid ${th.border}`, borderRadius:12, boxShadow:"0 12px 32px rgba(0,0,0,0.4)", zIndex:160, overflow:"hidden", backdropFilter:"blur(12px)", WebkitBackdropFilter:"blur(12px)" }}>
+            <div style={{ padding:"12px 14px", display:"flex", alignItems:"flex-start", gap:10 }}>
+              <span style={{ fontSize:16, flexShrink:0, marginTop:1 }}>🔍</span>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:12, fontWeight:600, color:th.text, fontFamily:"-apple-system,sans-serif", marginBottom:4 }}>Schema not recognised</div>
+                <div style={{ fontSize:11, color:th.textMuted, fontFamily:"-apple-system,sans-serif", lineHeight:1.5 }}>
+                  IRFlow couldn't identify the log format.{" "}
+                  <span
+                    onClick={() => { setSchemaLowConfidenceNotif(null); setModal({ type:"schemaBuilder", phase:"detect", detectedSchema: targetTab.detectedSchema || null, headers: targetTab.headers, sampleRows: (targetTab.rows || []).slice(0, 5) }); }}
+                    style={{ color:th.accent, cursor:"pointer", textDecoration:"underline", textDecorationStyle:"dotted" }}
+                  >
+                    Open Schema Builder
+                  </span>
+                  {" "}to label your columns.
+                </div>
+              </div>
+              <button onClick={() => setSchemaLowConfidenceNotif(null)} style={{ ...ms.bs, padding:"1px 6px", flexShrink:0, fontSize:11 }}>✕</button>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* ETS View — Phase 1: mapping review, Phase 2: read-only ETS table */}
       {modal?.type === "ets" && ct && (() => {
         const mapping = modal.mapping;
@@ -5501,6 +6326,17 @@ export default function App() {
           setTimeout(() => URL.revokeObjectURL(url), 2000);
         };
         const COL_W = 160;
+        const etsColWidths = modal.etsColWidths || {};
+        const getEtsW = (h) => etsColWidths[h] || COL_W;
+        const startEtsResize = (e, h) => {
+          e.preventDefault(); e.stopPropagation();
+          const startX = e.clientX, startW = getEtsW(h);
+          const onMove = (ev) => setModal(p => ({ ...p, etsColWidths: { ...(p.etsColWidths || {}), [h]: Math.max(60, startW + ev.clientX - startX) } }));
+          const onUp   = () => { document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); };
+          document.addEventListener("mousemove", onMove);
+          document.addEventListener("mouseup", onUp);
+        };
+        const totalEtsW = ETS_HEADERS.reduce((s, h) => s + getEtsW(h), 0);
         return (
           <div style={{ position:"fixed", inset:0, background:th.overlay, display:"flex", alignItems:"stretch", justifyContent:"center", zIndex:100, backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)", WebkitAppRegion:"drag" }}>
             <div style={{ WebkitAppRegion:"no-drag", background:th.modalBg, border:`1px solid ${th.border}`, borderRadius:12, width:"98vw", maxWidth:1600, margin:"16px auto", display:"flex", flexDirection:"column", boxShadow:"0 24px 48px rgba(0,0,0,0.5)", overflow:"hidden" }}>
@@ -5520,15 +6356,18 @@ export default function App() {
               </div>
               {/* Scrollable table */}
               <div style={{ flex:1, overflow:"auto", position:"relative" }}>
-                <table style={{ borderCollapse:"collapse", tableLayout:"fixed", width: ETS_HEADERS.length * COL_W, minWidth:"100%" }}>
+                <table style={{ borderCollapse:"collapse", tableLayout:"fixed", width: totalEtsW, minWidth:"100%" }}>
                   <thead>
                     <tr style={{ position:"sticky", top:0, zIndex:5, background:th.headerBg }}>
                       {ETS_HEADERS.map((etsH) => {
                         const isMatched = etsH === "Date added" || !!mapping.get(etsH);
+                        const w = getEtsW(etsH);
                         return (
-                          <th key={etsH} style={{ width:COL_W, minWidth:COL_W, padding:"8px 10px", textAlign:"left", fontSize:11, fontWeight:600, fontFamily:"-apple-system,sans-serif", color: isMatched ? th.headerText : th.textMuted, fontStyle: isMatched ? "normal" : "italic", borderBottom:`2px solid ${th.borderAccent}`, borderRight:`1px solid ${th.border}`, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", background:th.headerBg }} title={etsH === "Date added" ? `Auto-filled: ${modal.dateAdded}` : isMatched ? `Mapped from: ${mapping.get(etsH)}` : "No file column matched"}>
+                          <th key={etsH} style={{ width:w, minWidth:w, padding:"8px 10px", textAlign:"left", fontSize:11, fontWeight:600, fontFamily:"-apple-system,sans-serif", color: isMatched ? th.headerText : th.textMuted, fontStyle: isMatched ? "normal" : "italic", borderBottom:`2px solid ${th.borderAccent}`, borderRight:`1px solid ${th.border}`, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", background:th.headerBg, position:"relative", userSelect:"none" }} title={etsH === "Date added" ? `Auto-filled: ${modal.dateAdded}` : isMatched ? `Mapped from: ${mapping.get(etsH)}` : "No file column matched"}>
                             {etsH}
                             {!isMatched && <span style={{ fontSize:9, marginLeft:4, opacity:0.6 }}>(empty)</span>}
+                            <div onMouseDown={(e) => startEtsResize(e, etsH)}
+                              style={{ position:"absolute", right:0, top:0, bottom:0, width:5, cursor:"col-resize", background:"transparent", zIndex:1 }} />
                           </th>
                         );
                       })}
@@ -5540,8 +6379,9 @@ export default function App() {
                         {ETS_HEADERS.map((etsH) => {
                           const fCol = mapping.get(etsH);
                           const val = etsH === "Date added" ? modal.dateAdded : (fCol ? (row[fCol] || "") : "");
+                          const w = getEtsW(etsH);
                           return (
-                            <td key={etsH} style={{ padding:"4px 10px", fontSize:11.5, fontFamily:"'SF Mono',Menlo,monospace", color: fCol ? th.text : th.textMuted, borderBottom:`1px solid ${th.cellBorder}`, borderRight:`1px solid ${th.cellBorder}`, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", maxWidth:COL_W }} title={String(val)}>
+                            <td key={etsH} style={{ padding:"4px 10px", fontSize:11.5, fontFamily:"'SF Mono',Menlo,monospace", color: fCol ? th.text : th.textMuted, borderBottom:`1px solid ${th.cellBorder}`, borderRight:`1px solid ${th.cellBorder}`, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", width:w, maxWidth:w }} title={String(val)}>
                               {String(val)}
                             </td>
                           );

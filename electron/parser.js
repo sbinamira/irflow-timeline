@@ -47,6 +47,9 @@ async function getEvtxMessageProvider() {
 // ── Debug trace logger (shared singleton — see logger.js) ─────────
 const { dbg } = require("./logger");
 
+// ── Config-driven parser (loaded lazily to avoid circular deps) ────
+const _dynParser = require("./dynamic-parser");
+
 // ── CSV line parser (RFC 4180 compliant) ───────────────────────────
 function parseCSVLine(line, delimiter = ",") {
   const fields = [];
@@ -2537,7 +2540,9 @@ async function parseUsnJrnlFile(filePath, tabId, db, onProgress) {
 }
 
 /**
- * Auto-detect file type and parse accordingly
+ * Auto-detect file type and parse accordingly.
+ * Extension-specific parsers are checked first; unknown text/log files are
+ * tested against user-defined parser configs before falling back to CSV.
  */
 async function parseFile(filePath, tabId, db, onProgress, sheetName, fileSize) {
   // Pass fileSize hint to db.createTab for pragma scaling on large files
@@ -2555,7 +2560,6 @@ async function parseFile(filePath, tabId, db, onProgress, sheetName, fileSize) {
   if (ext === ".plaso" || ext === ".timeline") {
     const check = validatePlasoFile(filePath);
     if (ext === ".plaso" && !check.valid) throw new Error("Not a valid Plaso database (missing metadata table or format_version)");
-    // .timeline files: if valid Plaso SQLite, parse as Plaso; otherwise fall through to CSV
     if (check.valid) return parsePlasoFile(filePath, tabId, db, onProgress);
     if (ext === ".timeline") { /* not Plaso — fall through to CSV below */ }
   }
@@ -2565,16 +2569,18 @@ async function parseFile(filePath, tabId, db, onProgress, sheetName, fileSize) {
   // Auto-detect raw forensic files by name/magic bytes
   const baseName = path.basename(filePath).toUpperCase();
   if (!ext || baseName.includes("MFT") || baseName.includes("USNJRNL") || baseName === "$J") {
-    // Check $J (USN Journal) first — filename-based detection
     if (isUsnJrnlFile(filePath)) {
       return parseUsnJrnlFile(filePath, tabId, db, onProgress);
     }
-    // Check $MFT — magic byte detection
     if (isMftFile(filePath)) {
       return parseMftFile(filePath, tabId, db, onProgress);
     }
   }
-  // Default to CSV parsing (handles .csv, .tsv, .txt, .log, etc.)
+  // Config-based format detection — scans all user/bundled parser configs
+  const dynMatch = await _dynParser.detectFormat(filePath);
+  if (dynMatch) return _dynParser.parseWithConfig(filePath, dynMatch.config, tabId, db, onProgress);
+
+  // Default: CSV (handles .csv, .tsv, .txt, .log, etc.)
   return parseCSVStream(filePath, tabId, db, onProgress);
 }
 

@@ -1,0 +1,52 @@
+{
+  "id": "fortinet-fortigate-traffic",
+  "name": "Fortinet FortiGate Traffic",
+  "vendor": "Fortinet",
+  "tool": "FortiGate",
+  "version": "1.0",
+
+  "detection": {
+    "sampleLines": 10,
+    "required": [
+      { "type": "line_contains", "value": "devname=" },
+      { "type": "line_contains", "value": "logid=" }
+    ],
+    "optional": [
+      { "type": "line_contains", "value": "type=traffic" },
+      { "type": "line_contains", "value": "type=\"traffic\"" },
+      { "type": "line_contains", "value": "subtype=" },
+      { "type": "line_contains", "value": "srcip=" },
+      { "type": "line_contains", "value": "dstip=" }
+    ]
+  },
+
+  "format": {
+    "type": "kvp",
+    "kvSeparator": "=",
+    "kvQuote": "\""
+  },
+
+  "columns": [
+    { "key": "date",       "label": "Date",                   "semantic": "timestamp", "required": true  },
+    { "key": "time",       "label": "Time",                   "semantic": "timestamp", "required": true  },
+    { "key": "devname",    "label": "Device Name",            "semantic": "hostname",  "required": true  },
+    { "key": "logid",      "label": "Log ID",                                          "required": true  },
+    { "key": "type",       "label": "Log Type",                                        "required": true  },
+    { "key": "subtype",    "label": "Sub Type",                                        "required": false },
+    { "key": "srcip",      "label": "Source IP",              "semantic": "src_ip",    "required": true  },
+    { "key": "dstip",      "label": "Destination IP",         "semantic": "dst_ip",    "required": true  },
+    { "key": "srcport",    "label": "Source Port",            "semantic": "src_port",  "required": false },
+    { "key": "dstport",    "label": "Destination Port",       "semantic": "dst_port",  "required": false },
+    { "key": "srcintf",    "label": "Source Interface",                                "required": false },
+    { "key": "dstintf",    "label": "Destination Interface",                           "required": false },
+    { "key": "action",     "label": "Action",                                          "required": false },
+    { "key": "proto",      "label": "Protocol",                                        "required": false },
+    { "key": "policyid",   "label": "Policy ID",                                       "required": false },
+    { "key": "sessionid",  "label": "Session ID",                                      "required": false },
+    { "key": "user",       "label": "Username",               "semantic": "username",  "required": false },
+    { "key": "srccountry", "label": "Source Country",                                  "required": false },
+    { "key": "dstcountry", "label": "Destination Country",                             "required": false },
+    { "key": "sentbyte",   "label": "Sent Bytes",                                      "required": false },
+    { "key": "rcvdbyte",   "label": "Received Bytes",                                  "required": false }
+  ]
+}

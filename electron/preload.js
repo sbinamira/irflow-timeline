@@ -66,6 +66,11 @@ contextBridge.exposeInMainWorld("tle", {
   loadIocFile: () => ipcRenderer.invoke("load-ioc-file"),
   matchIocs: (tabId, iocPatterns, batchSize) => ipcRenderer.invoke("match-iocs", { tabId, iocPatterns, batchSize }),
 
+  // Elasticsearch ES|QL
+  esqlGetSettings: ()             => ipcRenderer.invoke("esql-get-settings"),
+  esqlSetSettings: (apiKey, url)  => ipcRenderer.invoke("esql-set-settings", { apiKey, url }),
+  esqlRunQuery:    (tabId, query, queryName) => ipcRenderer.invoke("esql-run-query", { tabId, query, queryName }),
+
   // VirusTotal enrichment
   vtSetApiKey: (apiKey, rateLimit, cacheTtlHours) => ipcRenderer.invoke("vt-set-api-key", { apiKey, rateLimit, cacheTtlHours }),
   vtGetApiKey: () => ipcRenderer.invoke("vt-get-api-key"),

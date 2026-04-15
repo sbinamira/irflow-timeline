@@ -1,0 +1,39 @@
+{
+  "id": "checkpoint-firewall-cef",
+  "name": "Check Point Firewall (CEF)",
+  "vendor": "Check Point",
+  "tool": "Log Exporter",
+  "version": "1.0",
+
+  "detection": {
+    "sampleLines": 3,
+    "required": [
+      { "type": "line_startswith", "value": "CEF:" }
+    ],
+    "optional": [
+      { "type": "line_contains", "value": "Check Point" },
+      { "type": "line_contains", "value": "action=" },
+      { "type": "line_contains", "value": "src=" }
+    ]
+  },
+
+  "format": {
+    "type": "cef",
+    "cefStaticFields": [
+      "CEF_Version", "Device_Vendor", "Device_Product",
+      "Device_Version", "Signature_ID", "Name", "Severity"
+    ],
+    "cefExtensionFormat": "kvp"
+  },
+
+  "columns": [
+    { "key": "rt",              "label": "Receive Time",       "semantic": "timestamp", "required": false },
+    { "key": "src",             "label": "Source IP",          "semantic": "src_ip",    "required": false },
+    { "key": "dst",             "label": "Destination IP",     "semantic": "dst_ip",    "required": false },
+    { "key": "suser",           "label": "Source User",        "semantic": "username",  "required": false },
+    { "key": "act",             "label": "Action",                                      "required": false },
+    { "key": "deviceDirection", "label": "Direction",                                   "required": false },
+    { "key": "Device_Vendor",   "label": "Vendor",                                      "required": false },
+    { "key": "Device_Product",  "label": "Product",                                     "required": false }
+  ]
+}

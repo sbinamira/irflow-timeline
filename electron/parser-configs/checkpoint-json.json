@@ -1,0 +1,35 @@
+{
+  "id": "checkpoint-firewall-json",
+  "name": "Check Point Firewall (JSON)",
+  "vendor": "Check Point",
+  "tool": "Management API / Log Exporter",
+  "version": "1.0",
+
+  "detection": {
+    "sampleLines": 2,
+    "required": [
+      { "type": "line_startswith", "value": "{" },
+      { "type": "json_field_exists", "field": "action" }
+    ],
+    "optional": [
+      { "type": "json_field_exists", "field": "origin_sic_name" },
+      { "type": "json_field_exists", "field": "rule_uid" },
+      { "type": "json_field_exists", "field": "blade" }
+    ]
+  },
+
+  "format": {
+    "type": "json",
+    "jsonMode": "auto"
+  },
+
+  "columns": [
+    { "key": "time",      "label": "Time",               "semantic": "timestamp", "required": false },
+    { "key": "src",       "label": "Source IP",          "semantic": "src_ip",    "required": false },
+    { "key": "dst",       "label": "Destination IP",     "semantic": "dst_ip",    "required": false },
+    { "key": "origin",    "label": "Origin",             "semantic": "hostname",  "required": false },
+    { "key": "action",    "label": "Action",                                      "required": false },
+    { "key": "rule_name", "label": "Rule Name",                                   "required": false },
+    { "key": "rule_uid",  "label": "Rule UID",                                    "required": false }
+  ]
+}

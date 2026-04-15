@@ -15,6 +15,8 @@ const https = require("https");
 const TimelineDB = require("./db");
 const { parseFile, getXLSXSheets, extractResidentData } = require("./parser");
 const { createUpdateController } = require("./updater");
+const { detectSchema } = require("./schema-fingerprints");
+const { initConfigDirs, getConfigDirs, loadConfigs, clearCache: clearConfigCache } = require("./config-loader");
 
 // Raise V8 heap limit to 16GB — needed for importing large forensic images (20GB+)
 // app.commandLine.appendSwitch only affects renderer processes; for the main process
@@ -462,6 +464,17 @@ async function startImport(filePath, tabId, fileName, sheetName, preFileSize) {
     dbg("IMPORT", `initial rows fetched`, { rowCount: initialData.rows?.length, totalFiltered: initialData.totalFiltered });
 
     const emptyColumns = db.getEmptyColumns(tabId);
+
+    // Schema fingerprint detection (non-fatal — import always completes)
+    let detectedSchema = null;
+    try {
+      const sampleForSchema = (initialData.rows || []).slice(0, 100);
+      detectedSchema = detectSchema(result.headers || [], sampleForSchema, result.sourceFormat || null);
+      dbg("IMPORT", `schema detected: ${detectedSchema?.schemaId} (conf=${detectedSchema?.confidence?.toFixed(2)})`);
+    } catch (schemaErr) {
+      dbg("IMPORT", "schema detection failed (non-fatal)", { error: schemaErr?.message });
+    }
+
     dbg("IMPORT", `sending import-complete`);
 
     safeSend("import-complete", {
@@ -476,6 +489,7 @@ async function startImport(filePath, tabId, fileName, sheetName, preFileSize) {
       emptyColumns,
       sourceFormat: result.sourceFormat || null,
       resolveStats,
+      detectedSchema,
     });
 
     // Defer index/FTS builds when more imports are queued to avoid memory spikes
@@ -1214,6 +1228,140 @@ safeHandle("save-pi-analyst-profile", async (event, { profile }) => {
   };
   await fsp.writeFile(piAnalystProfilePath, JSON.stringify(next, null, 2));
   return next;
+});
+
+// ── Elasticsearch ES|QL Integration ────────────────────────────────
+const _esqlSettingsPath = path.join(app.getPath("userData"), "esql-settings.json");
+
+function _loadEsqlSettings() {
+  try {
+    if (fs.existsSync(_esqlSettingsPath))
+      return JSON.parse(fs.readFileSync(_esqlSettingsPath, "utf8"));
+  } catch {}
+  return { apiKey: "", url: "http://localhost:9200" };
+}
+
+function _saveEsqlSettings(settings) {
+  try { fs.writeFileSync(_esqlSettingsPath, JSON.stringify(settings), "utf8"); } catch {}
+}
+
+function _runEsqlHttp(baseUrl, apiKey, query) {
+  return new Promise((resolve, reject) => {
+    let parsed;
+    try { parsed = new URL("/_query", baseUrl); } catch (e) { return reject(new Error(`Invalid Elasticsearch URL: ${baseUrl}`)); }
+    const body = JSON.stringify({ query });
+    const mod = parsed.protocol === "https:" ? require("https") : require("http");
+    const options = {
+      hostname: parsed.hostname,
+      port:     parsed.port || (parsed.protocol === "https:" ? 443 : 9200),
+      path:     "/_query",
+      method:   "POST",
+      headers: {
+        "Content-Type":   "application/json",
+        "Authorization":  `ApiKey ${apiKey}`,
+        "Content-Length": Buffer.byteLength(body),
+      },
+    };
+    const req = mod.request(options, (res) => {
+      let raw = "";
+      res.on("data", (chunk) => { raw += chunk; });
+      res.on("end", () => {
+        let resp;
+        try { resp = JSON.parse(raw); } catch { return reject(new Error("Invalid JSON response from Elasticsearch")); }
+        if (res.statusCode !== 200) {
+          const msg = resp?.error?.reason || resp?.error?.type || raw.slice(0, 300);
+          return reject(new Error(`Elasticsearch error ${res.statusCode}: ${msg}`));
+        }
+        const columns = resp.columns || [];
+        const values  = resp.values  || [];
+        const TS_TYPES  = new Set(["date", "date_nanos"]);
+        const NUM_TYPES = new Set(["long", "integer", "short", "byte", "double", "float",
+                                   "half_float", "scaled_float", "unsigned_long"]);
+        const headers        = columns.map(c => c.name);
+        const tsColumns      = columns.filter(c => TS_TYPES.has(c.type)).map(c => c.name);
+        const numericColumns = columns.filter(c => NUM_TYPES.has(c.type)).map(c => c.name);
+        const rows = values.map(row =>
+          Object.fromEntries(headers.map((h, i) => [h, row[i] ?? ""]))
+        );
+        resolve({ headers, rows, tsColumns, numericColumns });
+      });
+    });
+    req.on("error", (e) => reject(new Error(`Connection failed: ${e.message}`)));
+    req.write(body);
+    req.end();
+  });
+}
+
+safeHandle("esql-get-settings", async () => {
+  const s = _loadEsqlSettings();
+  const hasKey = !!(s.apiKey && s.apiKey.length > 0);
+  const maskedKey = hasKey ? s.apiKey.slice(0, 4) + "..." + s.apiKey.slice(-4) : "";
+  return { hasKey, maskedKey, url: s.url || "http://localhost:9200" };
+});
+
+safeHandle("esql-set-settings", async (_, { apiKey, url }) => {
+  const s = _loadEsqlSettings();
+  if (apiKey !== undefined) s.apiKey = apiKey;
+  if (url !== undefined) s.url = url;
+  _saveEsqlSettings(s);
+  return true;
+});
+
+safeHandle("esql-run-query", async (_, { tabId, query, queryName }) => {
+  const name = queryName && queryName.trim();
+  const label = query.trim().slice(0, 48).replace(/\s+/g, " ");
+  const fileName = name || ("ES|QL: " + label + (query.trim().length > 48 ? "…" : ""));
+  try {
+    safeSend("import-start", { tabId, fileName, filePath: "(esql)" });
+
+    const s = _loadEsqlSettings();
+    if (!s.apiKey) throw new Error("No Elasticsearch API key configured. Open File → Elasticsearch ES|QL… to add one.");
+
+    const esqlResult = await _runEsqlHttp(s.url, s.apiKey, query);
+
+    db.createTab(tabId, esqlResult.headers);
+    const BATCH = 5000;
+    for (let i = 0; i < esqlResult.rows.length; i += BATCH) {
+      db.insertBatch(tabId, esqlResult.rows.slice(i, i + BATCH));
+      safeSend("import-progress", {
+        tabId,
+        rowsImported: Math.min(i + BATCH, esqlResult.rows.length),
+        bytesRead: i + BATCH,
+        totalBytes: esqlResult.rows.length,
+        percent: Math.round(Math.min(i + BATCH, esqlResult.rows.length) / esqlResult.rows.length * 100),
+      });
+    }
+
+    // finalizeImport samples data to detect numeric columns and sets meta.numericColumns
+    // (same call every parser makes — must be done before queryRows)
+    const finalized = db.finalizeImport(tabId);
+
+    const initialData = db.queryRows(tabId, { offset: 0, limit: 5000 });
+    const emptyColumns = db.getEmptyColumns(tabId);
+
+    safeSend("import-complete", {
+      tabId,
+      fileName,
+      headers:        finalized.headers,
+      rowCount:       finalized.rowCount,
+      tsColumns:      finalized.tsColumns,
+      numericColumns: finalized.numericColumns,
+      initialRows:    initialData.rows,
+      totalFiltered:  initialData.totalFiltered,
+      emptyColumns,
+      sourceFormat:   "esql",
+    });
+
+    db.buildIndexesAsync(tabId, (p) => safeSend("index-progress", { tabId, ...p }))
+      .then(() => db.buildFtsAsync(tabId, (p) => safeSend("fts-progress", { tabId, ...p })))
+      .catch((e) => safeSend("fts-progress", { tabId, indexed: 0, total: 0, done: true, error: e?.message }));
+
+    return { success: true, rowCount: esqlResult.rows.length };
+  } catch (err) {
+    try { db.closeTab(tabId); } catch (_) {}
+    safeSend("import-error", { tabId, fileName, error: err.message });
+    return { success: false, error: err.message };
+  }
 });
 
 // ── VirusTotal API Integration ──────────────────────────────────────
@@ -2047,5 +2195,28 @@ ${body}
 </body>
 </html>`;
 }
+
+// ── Config loader init ────────────────────────────────────────────────────────
+// Bundled example configs ship with the app; user configs live in userData so they
+// survive app updates without being overwritten.
+{
+  const bundledConfigDir = path.join(__dirname, "parser-configs");
+  const userConfigDir    = path.join(app.getPath("userData"), "parser-configs");
+  // Create the user config dir if it doesn't exist yet (first run)
+  if (!fs.existsSync(userConfigDir)) {
+    try { fs.mkdirSync(userConfigDir, { recursive: true }); } catch {}
+  }
+  initConfigDirs(bundledConfigDir, userConfigDir);
+  dbg("INIT", `Parser configs: ${loadConfigs().length} loaded`);
+}
+
+// IPC: return config dir paths so the UI can show an "Open Config Folder" button
+ipcMain.handle("get-parser-config-dirs", () => getConfigDirs());
+
+// IPC: force-reload configs from disk (e.g. after user drops in a new JSON file)
+ipcMain.handle("reload-parser-configs", () => {
+  clearConfigCache();
+  return loadConfigs().map(c => ({ id: c.id, name: c.name, vendor: c.vendor, tool: c.tool, _source: c._source }));
+});
 
 app.whenReady().then(createWindow);
