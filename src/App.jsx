@@ -1063,6 +1063,124 @@ const _piAnalystEntryMatches = (entry, node, parentNode, reason) => {
   return true;
 };
 
+// ── ETS View ────────────────────────────────────────────────────────────────
+const ETS_HEADERS = [
+  "Date / Time (UTC)", "Notable Event", "Date added", "Added by",
+  "Hostname (from evidence)", "Src Hostname/IP", "Src Account",
+  "Dst Hostname/IP", "Dst Account", "Artifact Source", "Artifact Type",
+  "Artifact Details", "Description", "Notes",
+];
+
+// Known synonym mappings per ETS header — checked first (case-insensitive exact match)
+// before falling back to fuzzy scoring. Keys must match ETS_HEADERS exactly.
+const ETS_SYNONYMS = new Map([
+  ["Date / Time (UTC)",        ["TimeCreated", "@timestamp", "event.ingested", "TimeGenerated", "EventTime", "system.time", "creation_time", "last_modified", "_time"]],
+  ["Hostname (from evidence)", ["Computer", "agent.hostname", "host.name", "ComputerName", "target_system", "device.name", "endpoint_id"]],
+  ["Src Hostname/IP",          ["source.ip", "src_ip", "source.address", "src_host", "client.ip", "originating_host"]],
+  ["Src Account",              ["source.user.name", "user.name", "SubjectUserName", "src_user", "caller_id", "initiating_user"]],
+  ["Dst Hostname/IP",          ["destination.ip", "dest_ip", "dst_host", "target.address", "server.ip", "remote_host"]],
+  ["Dst Account",              ["destination.user.name", "target.user.name", "TargetUserName", "dst_user", "logon_account"]],
+  ["Artifact Source",          ["file.path", "log.file.path", "registry.path", "provider_name", "event.dataset", "source_name", "channel", "provider"]],
+  ["Artifact Details",         ["event.original", "payload", "message", "data_parsed", "hashes.sha256", "process.command_line", "registry.value", "MapDescription", "Description"]],
+]);
+
+// Hardcoded defaults for known tool exports. Only applied when the file is positively
+// identified as that format. Values that don't exist in the file are silently skipped.
+// Keys must match ETS_HEADERS exactly. null = no default for that ETS column.
+const ETS_FORMAT_PRESETS = {
+  evtxecmd: {
+    "Date / Time (UTC)":        "TimeCreated",
+    "Hostname (from evidence)": "Computer",
+    "Src Hostname/IP":          "RemoteHost",
+    "Src Account":              "UserName",
+    "Dst Account":              "PayloadData1",
+    "Artifact Source":          "Provider",
+    "Artifact Details":         "MapDescription",
+  },
+  mft: {
+    "Date / Time (UTC)": "Created0x10",
+    "Description":       "ParentPath",
+    "Notes":             "FileName",
+  },
+};
+
+// Detect known tool format from column headers + sourceFormat.
+// Returns "evtxecmd" | "mft" | null.
+function _detectEtsFormat(fileHeaders, sourceFormat) {
+  if (sourceFormat === "raw-mft") return "mft";
+  const hs = new Set(fileHeaders.map(h => h.toLowerCase()));
+  if (hs.has("timecreated") && hs.has("computer") && hs.has("mapdescription")) return "evtxecmd";
+  if (hs.has("created0x10") && hs.has("filename") && hs.has("parentpath")) return "mft";
+  return null;
+}
+
+// Build reverse lookup: lowercase file header → ETS header (for O(1) synonym checks)
+const _etsSynonymLookup = (() => {
+  const m = new Map();
+  for (const [etsH, synonyms] of ETS_SYNONYMS) {
+    for (const syn of synonyms) {
+      const key = syn.toLowerCase();
+      if (!m.has(key)) m.set(key, etsH);
+    }
+  }
+  return m;
+})();
+
+function _etsTokens(s) {
+  return s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").trim().split(/\s+/).filter(Boolean);
+}
+function _etsFlat(s) {
+  return s.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+function _etsScore(etsH, fileH) {
+  const et = _etsTokens(etsH), ft = _etsTokens(fileH);
+  const ef = _etsFlat(etsH),   ff = _etsFlat(fileH);
+  const se = new Set(et), sf = new Set(ft);
+  let n = 0; for (const t of se) if (sf.has(t)) n++;
+  const dice = (se.size + sf.size) > 0 ? (2 * n) / (se.size + sf.size) : 0;
+  const flatSub = (ef.includes(ff) || ff.includes(ef)) ? 0.5 : 0;
+  const tokInFlat = et.some(t => t.length >= 3 && ff.includes(t)) ? 0.15 : 0;
+  return Math.min(1, dice + flatSub + tokInFlat);
+}
+function matchColumnsToETS(fileHeaders, sourceFormat) {
+  const format = _detectEtsFormat(fileHeaders, sourceFormat);
+
+  // ── Format preset path ───────────────────────────────────────────────────
+  if (format) {
+    const preset = ETS_FORMAT_PRESETS[format];
+    const result = new Map();
+    for (const etsH of ETS_HEADERS) {
+      const candidate = preset[etsH];
+      // Only use the preset value if the column actually exists in this file
+      result.set(etsH, (candidate && fileHeaders.includes(candidate)) ? candidate : null);
+    }
+    return result;
+  }
+
+  // ── Synonym + fuzzy fallback ─────────────────────────────────────────────
+  const THRESHOLD = 0.25;
+  const pairs = [];
+  ETS_HEADERS.forEach((e, ei) =>
+    fileHeaders.forEach((f, fi) => {
+      const synEts = _etsSynonymLookup.get(f.toLowerCase());
+      if (synEts === e) { pairs.push({ ei, fi, s: 1.0 }); return; }
+      const s = _etsScore(e, f);
+      if (s >= THRESHOLD) pairs.push({ ei, fi, s });
+    })
+  );
+  pairs.sort((a, b) => b.s - a.s);
+  const usedFile = new Set();
+  const result = new Map();
+  for (const { ei, fi } of pairs) {
+    const etsH = ETS_HEADERS[ei];
+    if (result.has(etsH) || usedFile.has(fi)) continue;
+    result.set(etsH, fileHeaders[fi]);
+    usedFile.add(fi);
+  }
+  for (const e of ETS_HEADERS) if (!result.has(e)) result.set(e, null);
+  return result;
+}
+
 // ── Main App ───────────────────────────────────────────────────────
 export default function App() {
   const [tabs, setTabs] = useState([]);
@@ -3554,6 +3672,8 @@ export default function App() {
                     { group: "USN Journal", icon: ic(<><rect x="3" y="3" width="18" height="18" rx="2" fill={(th.accent || "#58a6ff") + "12"}/><path d="M7 8h10M7 12h7" opacity="0.6"/><path d="M16 11v6" strokeWidth="2"/><path d="M13 14l3 3 3-3" fill="none"/></>), items: [
                       { label: "USN Journal Analysis", icon: ic(<><rect x="3" y="3" width="18" height="18" rx="2" fill={(th.accent || "#58a6ff") + "14"}/><path d="M7 7h10M7 11h10M7 15h6"/><circle cx="17" cy="15" r="2" fill={th.warning || "#d29922"} stroke="none" opacity="0.7"/></>), action: () => { if (ct?.dataReady) setModal({ type: "usnAnalysis", phase: "input", startTime: "", endTime: "", pathFilter: "", analyses: { renames: true, deletions: true, creations: true, exfil: true, execution: true, persistence: true, suspiciousPaths: true, securityChanges: true, dataOverwrite: true, streamChanges: true, closePatterns: true }, data: null, loading: false, error: null, mftTabId: null, usnExpanded: { renames: true, deletions: true, creations: true, exfil: true, execution: true, persistence: true, suspiciousPaths: true, securityChanges: true, dataOverwrite: true, streamChanges: true, closePatterns: true }, usnIncidentsExpanded: false, usnTimelineExpanded: false, usnLikelyFindingsExpanded: false, usnShowSuppressed: {}, usnSelected: {}, usnSort: {}, usnColWidths: {}, usnCheckboxFilters: {}, usnScopeDir: "", usnSiblingDir: "", usnFocusEntry: "", usnTimelineIncident: "", usnTimelineLimit: 120 }); setUsnFd(null); }, disabled: !ct?.dataReady || ct?.sourceFormat !== "raw-usnjrnl" },
                     ] },
+                    { section: "Custom" },
+                    { label: "ETS View", icon: ic(<><rect x="3" y="3" width="18" height="5" rx="1"/><rect x="3" y="10" width="18" height="3" rx="1"/><rect x="3" y="15" width="14" height="3" rx="1"/></>), action: () => { if (!ct?.headers?.length) return; setModal({ type: "ets", phase: "mapping", mapping: matchColumnsToETS(ct.headers, ct.sourceFormat), allHeaders: ct.headers, dateAdded: new Date().toISOString().slice(0, 10) }); }, disabled: !ct?.dataReady },
                     { section: "Export" },
                     { label: "Generate Report", icon: ic(<><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></>, th.success || "#3fb950"), action: async () => { if (ct?.dataReady) await tle.generateReport(ct.id, ct.name, ct.tagColors || {}, ct.vtEnrichment || null); }, disabled: !ct?.dataReady },
                   ];
@@ -5284,6 +5404,163 @@ export default function App() {
           </div>
         </Overlay>
       )}
+
+      {/* ETS View — Phase 1: mapping review, Phase 2: read-only ETS table */}
+      {modal?.type === "ets" && ct && (() => {
+        const mapping = modal.mapping;
+        const matchCount = [...mapping.values()].filter(Boolean).length;
+
+        // ── Phase 1: Mapping review ──────────────────────────────────────────
+        if (modal.phase === "mapping") {
+          return (
+            <div style={{ position:"fixed", inset:0, background:th.overlay, display:"flex", alignItems:"center", justifyContent:"center", zIndex:100, backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)", WebkitAppRegion:"drag" }}>
+              <div style={{ WebkitAppRegion:"no-drag", background:th.modalBg, border:`1px solid ${th.border}`, borderRadius:12, width:700, maxWidth:"96vw", maxHeight:"90vh", display:"flex", flexDirection:"column", boxShadow:"0 24px 48px rgba(0,0,0,0.5)" }}>
+                {/* Header */}
+                <div style={{ padding:"16px 20px 14px", borderBottom:`1px solid ${th.border}`, flexShrink:0, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                  <div>
+                    <div style={{ fontSize:15, fontWeight:600, color:th.text, fontFamily:"-apple-system,sans-serif" }}>ETS View — Column Mapping</div>
+                    <div style={{ fontSize:11, color:th.textMuted, marginTop:2, fontFamily:"-apple-system,sans-serif" }}>
+                      Auto-matched <b style={{ color: matchCount > 0 ? th.success : th.warning }}>{matchCount}</b> of {ETS_HEADERS.length} ETS columns.
+                      {matchCount > 0 ? " Adjust below if needed, then open the view." : " No matches found — select manually or cancel."}
+                    </div>
+                  </div>
+                  <button onClick={() => setModal(null)} style={ms.bs}>✕</button>
+                </div>
+                {/* Table */}
+                <div style={{ overflowY:"auto", padding:"10px 20px", flex:1 }}>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 90px", gap:8, padding:"4px 6px 8px", borderBottom:`1px solid ${th.border}`, marginBottom:4 }}>
+                    {["ETS Column","File Column","Status"].map((h, i) => (
+                      <span key={i} style={{ fontSize:9, fontWeight:700, color:th.accent, textTransform:"uppercase", letterSpacing:"0.08em", fontFamily:"-apple-system,sans-serif" }}>{h}</span>
+                    ))}
+                  </div>
+                  {ETS_HEADERS.map((etsH) => {
+                    // "Date added" is always auto-filled with today's date — not mappable
+                    if (etsH === "Date added") {
+                      return (
+                        <div key={etsH} style={{ display:"grid", gridTemplateColumns:"1fr 1fr 90px", gap:8, alignItems:"center", padding:"4px 6px", borderRadius:5, marginBottom:2, background:`${th.accent}0A` }}>
+                          <span style={{ fontSize:12, color:th.text, fontFamily:"-apple-system,sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }} title={etsH}>{etsH}</span>
+                          <span style={{ fontSize:11.5, color:th.textMuted, fontFamily:"-apple-system,sans-serif", fontStyle:"italic", padding:"4px 6px", border:`1px solid ${th.btnBorder}`, borderRadius:5, background:th.bgInput, display:"flex", alignItems:"center", gap:6 }}>
+                            <span style={{ fontSize:10, opacity:0.7 }}>📅</span>{modal.dateAdded}
+                          </span>
+                          <span style={{ fontSize:10.5, fontFamily:"-apple-system,sans-serif", display:"flex", alignItems:"center", gap:4, color:th.accent }}>
+                            <span style={{ width:6, height:6, borderRadius:"50%", flexShrink:0, display:"inline-block", background:th.accent }} />
+                            auto
+                          </span>
+                        </div>
+                      );
+                    }
+                    const mapped = mapping.get(etsH) || null;
+                    return (
+                      <div key={etsH} style={{ display:"grid", gridTemplateColumns:"1fr 1fr 90px", gap:8, alignItems:"center", padding:"4px 6px", borderRadius:5, marginBottom:2, background: mapped ? `${th.accent}0A` : "transparent" }}>
+                        <span style={{ fontSize:12, color:th.text, fontFamily:"-apple-system,sans-serif", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }} title={etsH}>{etsH}</span>
+                        <select value={mapped || ""}
+                          onChange={(e) => { const v = e.target.value; setModal((p) => { const m = new Map(p.mapping); m.set(etsH, v || null); return { ...p, mapping: m }; }); }}
+                          style={{ padding:"4px 6px", background:th.bgInput, borderRadius:5, fontSize:11.5, outline:"none", fontFamily:"-apple-system,sans-serif", width:"100%", color:mapped ? th.text : th.textMuted, border:`1px solid ${mapped ? th.accent+"55" : th.btnBorder}` }}>
+                          <option value="">— not mapped —</option>
+                          {modal.allHeaders.map((h) => <option key={h} value={h}>{h}</option>)}
+                        </select>
+                        <span style={{ fontSize:10.5, fontFamily:"-apple-system,sans-serif", display:"flex", alignItems:"center", gap:4, color: mapped ? th.success : th.textMuted }}>
+                          <span style={{ width:6, height:6, borderRadius:"50%", flexShrink:0, display:"inline-block", background: mapped ? th.success : th.textMuted }} />
+                          {mapped ? "matched" : "none"}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+                {/* Footer */}
+                <div style={{ padding:"12px 20px", borderTop:`1px solid ${th.border}`, flexShrink:0 }}>
+                  {matchCount === 0 && (
+                    <div style={{ fontSize:11, color:th.warning, marginBottom:8, fontFamily:"-apple-system,sans-serif" }}>⚠ No columns are mapped — use the dropdowns above to select manually, or cancel.</div>
+                  )}
+                  <div style={{ display:"flex", justifyContent:"flex-end", gap:8 }}>
+                    <button onClick={() => setModal(null)} style={ms.bs}>Cancel</button>
+                    <button disabled={matchCount === 0} style={{ ...ms.bp, opacity: matchCount === 0 ? 0.45 : 1, cursor: matchCount === 0 ? "default" : "pointer" }}
+                      onClick={() => setModal((p) => ({ ...p, phase: "view" }))}>
+                      Open ETS View →
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        }
+
+        // ── Phase 2: Read-only ETS table view ───────────────────────────────
+        const rows = ct.rows || [];
+        const isPartial = rows.length < (ct.totalFiltered || 0);
+        const exportTsv = () => {
+          const lines = [ETS_HEADERS.join("\t"), ...rows.map((row) => ETS_HEADERS.map((e) => { if (e === "Date added") return modal.dateAdded; const f = mapping.get(e); return f ? String(row[f] || "") : ""; }).join("\t"))];
+          navigator.clipboard?.writeText(lines.join("\n"));
+        };
+        const exportCsv = () => {
+          const esc = (v) => `"${String(v).replace(/"/g, '""')}"`;
+          const lines = [ETS_HEADERS.map(esc).join(","), ...rows.map((row) => ETS_HEADERS.map((e) => { if (e === "Date added") return esc(modal.dateAdded); const f = mapping.get(e); return esc(f ? (row[f] || "") : ""); }).join(","))];
+          const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a"); a.href = url; a.download = `ets-view-${ct.name || "export"}.csv`; a.click();
+          setTimeout(() => URL.revokeObjectURL(url), 2000);
+        };
+        const COL_W = 160;
+        return (
+          <div style={{ position:"fixed", inset:0, background:th.overlay, display:"flex", alignItems:"stretch", justifyContent:"center", zIndex:100, backdropFilter:"blur(4px)", WebkitBackdropFilter:"blur(4px)", WebkitAppRegion:"drag" }}>
+            <div style={{ WebkitAppRegion:"no-drag", background:th.modalBg, border:`1px solid ${th.border}`, borderRadius:12, width:"98vw", maxWidth:1600, margin:"16px auto", display:"flex", flexDirection:"column", boxShadow:"0 24px 48px rgba(0,0,0,0.5)", overflow:"hidden" }}>
+              {/* Header */}
+              <div style={{ padding:"12px 20px", borderBottom:`1px solid ${th.border}`, flexShrink:0, display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, flexWrap:"wrap" }}>
+                <div>
+                  <span style={{ fontSize:14, fontWeight:600, color:th.text, fontFamily:"-apple-system,sans-serif" }}>ETS View</span>
+                  {ct.name && <span style={{ fontSize:12, color:th.textMuted, marginLeft:8, fontFamily:"-apple-system,sans-serif" }}>— {ct.name}</span>}
+                </div>
+                <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+                  <span style={{ fontSize:11, color:th.textMuted, fontFamily:"-apple-system,sans-serif" }}>{rows.length.toLocaleString()} rows · {matchCount} of {ETS_HEADERS.length} columns matched</span>
+                  <button onClick={exportTsv} style={ms.bs} title="Copy all rows as tab-separated values">Copy as TSV</button>
+                  <button onClick={exportCsv} style={ms.bs} title="Download as CSV file">Export CSV</button>
+                  <button onClick={() => setModal((p) => ({ ...p, phase: "mapping" }))} style={ms.bs}>← Adjust</button>
+                  <button onClick={() => setModal(null)} style={ms.bs}>✕ Close</button>
+                </div>
+              </div>
+              {/* Scrollable table */}
+              <div style={{ flex:1, overflow:"auto", position:"relative" }}>
+                <table style={{ borderCollapse:"collapse", tableLayout:"fixed", width: ETS_HEADERS.length * COL_W, minWidth:"100%" }}>
+                  <thead>
+                    <tr style={{ position:"sticky", top:0, zIndex:5, background:th.headerBg }}>
+                      {ETS_HEADERS.map((etsH) => {
+                        const isMatched = etsH === "Date added" || !!mapping.get(etsH);
+                        return (
+                          <th key={etsH} style={{ width:COL_W, minWidth:COL_W, padding:"8px 10px", textAlign:"left", fontSize:11, fontWeight:600, fontFamily:"-apple-system,sans-serif", color: isMatched ? th.headerText : th.textMuted, fontStyle: isMatched ? "normal" : "italic", borderBottom:`2px solid ${th.borderAccent}`, borderRight:`1px solid ${th.border}`, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", background:th.headerBg }} title={etsH === "Date added" ? `Auto-filled: ${modal.dateAdded}` : isMatched ? `Mapped from: ${mapping.get(etsH)}` : "No file column matched"}>
+                            {etsH}
+                            {!isMatched && <span style={{ fontSize:9, marginLeft:4, opacity:0.6 }}>(empty)</span>}
+                          </th>
+                        );
+                      })}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((row, ri) => (
+                      <tr key={ri} style={{ background: ri % 2 === 0 ? th.rowEven : th.rowOdd }}>
+                        {ETS_HEADERS.map((etsH) => {
+                          const fCol = mapping.get(etsH);
+                          const val = etsH === "Date added" ? modal.dateAdded : (fCol ? (row[fCol] || "") : "");
+                          return (
+                            <td key={etsH} style={{ padding:"4px 10px", fontSize:11.5, fontFamily:"'SF Mono',Menlo,monospace", color: fCol ? th.text : th.textMuted, borderBottom:`1px solid ${th.cellBorder}`, borderRight:`1px solid ${th.cellBorder}`, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", maxWidth:COL_W }} title={String(val)}>
+                              {String(val)}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {/* Partial-data warning */}
+              {isPartial && (
+                <div style={{ padding:"7px 16px", background:th.warning+"18", borderTop:`1px solid ${th.warning}44`, fontSize:11, color:th.warning, fontFamily:"-apple-system,sans-serif", flexShrink:0 }}>
+                  ⚠ Showing {rows.length.toLocaleString()} of {(ct.totalFiltered || 0).toLocaleString()} total filtered rows — apply filters in the main view first to narrow results before opening ETS View.
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Cross-tab Find */}
       {modal?.type === "crossfind" && (
